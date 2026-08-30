@@ -116,6 +116,7 @@ class Orchestrator:
 
         for idx in tqdm(indices, desc="Pages"):
             source_page = doc[idx]
+            pages_before = writer.page_count
             try:
                 content = self._scanner.extract(source_page, idx)
                 if content.is_scanned:
@@ -134,12 +135,21 @@ class Orchestrator:
                 )
             except Exception as exc:  # noqa: BLE001 - never abort the whole run
                 logger.error("Page %d failed: %s", idx + 1, exc, exc_info=True)
+                # render_page appends its output page before it can fail, so any
+                # half-written page must go before the replacement is added --
+                # otherwise a failed page shifts the rest of the book by one.
+                self._discard_pages_after(writer, pages_before)
                 self._untranslated_page(writer, source_page)
 
         writer.save(output_path, garbage=4, deflate=True)
         logger.info("Saved %s", output_path)
         self._log_stats()
         return True
+
+    @staticmethod
+    def _discard_pages_after(writer: fitz.Document, count: int) -> None:
+        while writer.page_count > count:
+            writer.delete_page(writer.page_count - 1)
 
     def _untranslated_page(self, writer: fitz.Document, source_page: fitz.Page) -> None:
         """Emit the original page when translation or rendering failed.
