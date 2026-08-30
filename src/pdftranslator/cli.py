@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -67,6 +68,12 @@ def main(
         typer.secho(f"Unknown --mode {mode!r}", fg="red")
         raise typer.Exit(1)
 
+    try:
+        _validate_output(input_file, output_file)
+    except ValueError as exc:
+        typer.secho(str(exc), fg="red")
+        raise typer.Exit(1)
+
     # Validate the page spec before doing any work, so a typo costs nothing.
     try:
         parse_page_spec(pages)
@@ -94,6 +101,36 @@ def main(
         translator.close()
 
     typer.secho(f"Done -> {output_file}", fg="green")
+
+
+def _validate_output(input_file: Path, output_file: Path) -> None:
+    """Reject an unusable --output before a single API call is paid for.
+
+    Everything here used to surface only at the final writer.save(), i.e. after
+    the whole document had been translated.
+    """
+    if output_file.is_dir():
+        raise ValueError(
+            f"Output path {str(output_file)!r} is a directory. Give a file path."
+        )
+
+    try:
+        same = input_file.resolve() == output_file.resolve()
+    except OSError:
+        same = False
+    if same:
+        raise ValueError(
+            "Output path is the same file as the input. Choose a different "
+            "--output so the source PDF is not overwritten."
+        )
+
+    parent = output_file.parent if str(output_file.parent) else Path(".")
+    if not parent.is_dir():
+        raise ValueError(
+            f"Output directory {str(parent)!r} does not exist. Create it first."
+        )
+    if not os.access(parent, os.W_OK):
+        raise ValueError(f"Output directory {str(parent)!r} is not writable.")
 
 
 if __name__ == "__main__":

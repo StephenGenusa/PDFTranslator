@@ -96,13 +96,22 @@ class Orchestrator:
         self._mirror = mirror
 
     def run(self, input_path: Path, output_path: Path, page_range: str = "all") -> bool:
-        doc = fitz.open(input_path)
+        with fitz.open(input_path) as doc, fitz.open() as writer:
+            return self._run(doc, writer, input_path, output_path, page_range)
+
+    def _run(
+        self,
+        doc: fitz.Document,
+        writer: fitz.Document,
+        input_path: Path,
+        output_path: Path,
+        page_range: str,
+    ) -> bool:
         logger.info("Loaded %s (%d pages)", input_path.name, doc.page_count)
 
         indices = resolve_page_spec(page_range, doc.page_count)
         logger.info("Processing %d page(s)", len(indices))
 
-        writer = fitz.open()
         prev_tail: str | None = None
 
         for idx in tqdm(indices, desc="Pages"):
