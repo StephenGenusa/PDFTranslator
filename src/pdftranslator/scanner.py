@@ -72,6 +72,7 @@ class DocumentScanner:
             lines=lines,
             text_left=text_left,
             text_right=text_right,
+            is_scanned=self.is_scanned(page),
         )
 
     # ------------------------------------------------------------------ lines
