@@ -134,20 +134,33 @@ class Orchestrator:
                 )
             except Exception as exc:  # noqa: BLE001 - never abort the whole run
                 logger.error("Page %d failed: %s", idx + 1, exc, exc_info=True)
-                self._blank_page(writer, source_page)
+                self._untranslated_page(writer, source_page)
 
         writer.save(output_path, garbage=4, deflate=True)
         logger.info("Saved %s", output_path)
         self._log_stats()
         return True
 
-    def _blank_page(self, writer: fitz.Document, source_page: fitz.Page) -> None:
+    def _untranslated_page(self, writer: fitz.Document, source_page: fitz.Page) -> None:
+        """Emit the original page when translation or rendering failed.
+
+        This used to emit an empty page, so one transient provider error
+        silently replaced a page of the book with a white rectangle.
+        """
         w, h = source_page.rect.width, source_page.rect.height
-        writer.new_page(width=w * 2 if self._mirror else w, height=h)
+        page = writer.new_page(width=w * 2 if self._mirror else w, height=h)
+        parent, pno = source_page.parent, source_page.number
+        if self._mirror:
+            page.show_pdf_page(fitz.Rect(0, 0, w, h), parent, pno)
+            page.show_pdf_page(fitz.Rect(w, 0, w * 2, h), parent, pno)
+        else:
+            page.show_pdf_page(fitz.Rect(0, 0, w, h), parent, pno)
 
     def _log_stats(self) -> None:
         s = self._translator.stats
         logger.info(
-            "Translation stats: pages=%d api_calls=%d cache_hits=%d fallbacks=%d",
+            "Translation stats: pages=%d api_calls=%d cache_hits=%d "
+            "fallbacks=%d api_errors=%d",
             s["pages"], s["api_calls"], s["cache_hits"], s["fallbacks"],
+            s.get("api_errors", 0),
         )

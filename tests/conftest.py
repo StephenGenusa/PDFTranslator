@@ -4,33 +4,40 @@ from __future__ import annotations
 
 import pytest
 
+from pdftranslator import translate as translate_mod
 from pdftranslator.translate import Translator
 
 
-class ScriptedTranslator(Translator):
-    """A real Translator driven by a scripted model.
+class _Reply:
+    """Minimal stand-in for a litellm ChatCompletion response."""
 
-    Everything except the network call is the production code path. Each entry
-    in ``replies`` is either the raw text the model returns, or an Exception to
-    raise from that call.
+    def __init__(self, content: str) -> None:
+        message = type("Message", (), {"content": content})()
+        choice = type("Choice", (), {"message": message})()
+        self.choices = [choice]
+
+
+class ScriptedModel:
+    """A scripted provider, patched in at the transport boundary.
+
+    Replacing litellm.completion rather than Translator._complete keeps the
+    retry/backoff logic under test real. Each entry in ``replies`` is either the
+    raw text the model returns or an Exception to raise from that call.
     """
 
-    def __init__(self, replies, **kwargs):
-        kwargs.setdefault("model", "fake/model")
-        kwargs.setdefault("target_lang", "English")
-        super().__init__(**kwargs)
-        self._replies = list(replies)
+    def __init__(self, replies) -> None:
+        self.replies = list(replies)
         self.sent: list[list[dict]] = []
+        self.slept: list[float] = []
 
-    def _complete(self, messages):
-        self.sent.append(messages)
-        self.stats["api_calls"] += 1
-        if not self._replies:
-            return ""
-        reply = self._replies.pop(0)
+    def __call__(self, **kwargs):
+        self.sent.append(kwargs["messages"])
+        if not self.replies:
+            return _Reply("")
+        reply = self.replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
-        return reply
+        return _Reply(reply)
 
 
 @pytest.fixture
@@ -39,13 +46,24 @@ def cache_dir(tmp_path):
 
 
 @pytest.fixture
-def scripted(cache_dir):
-    """Factory for ScriptedTranslators that are closed at teardown."""
-    made: list[ScriptedTranslator] = []
+def scripted(cache_dir, monkeypatch):
+    """Factory: a real Translator wired to a scripted provider.
+
+    The returned Translator carries `.model` (the ScriptedModel) so tests can
+    inspect the messages sent and the backoff waited.
+    """
+    made: list[Translator] = []
 
     def _make(replies, **kwargs):
+        kwargs.setdefault("model", "fake/model")
+        kwargs.setdefault("target_lang", "English")
         kwargs.setdefault("cache_dir", cache_dir)
-        t = ScriptedTranslator(replies, **kwargs)
+        model = ScriptedModel(replies)
+        monkeypatch.setattr(translate_mod.litellm, "completion", model)
+        monkeypatch.setattr(translate_mod.time, "sleep", model.slept.append)
+        t = Translator(**kwargs)
+        t.model = model
+        t.sent = model.sent
         made.append(t)
         return t
 

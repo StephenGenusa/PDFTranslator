@@ -73,7 +73,13 @@ class Translator:
         self.max_attempts = max_attempts
         self.request_pause = request_pause
         self._cache = Cache(cache_dir)
-        self.stats = {"pages": 0, "api_calls": 0, "cache_hits": 0, "fallbacks": 0}
+        self.stats = {
+            "pages": 0,
+            "api_calls": 0,
+            "cache_hits": 0,
+            "fallbacks": 0,
+            "api_errors": 0,
+        }
 
     # ------------------------------------------------------------------- API
     def translate_page(
@@ -91,9 +97,15 @@ class Translator:
 
         # Keyed batch: the model returns an object keyed by line index, so a
         # dropped/extra line is realigned by key instead of shifting everything.
-        partial = self._translate_batch(lines, preceding_context)
+        partial, api_failed = self._translate_batch(lines, preceding_context)
         missing = [i for i, r in enumerate(partial) if r is None]
-        if missing:
+        if missing and api_failed:
+            logger.error(
+                "Provider unreachable; keeping the source text for %d line(s) "
+                "and NOT caching this page.",
+                len(missing),
+            )
+        elif missing:
             logger.warning(
                 "Batch left %d/%d line(s) untranslated; filling per line.",
                 len(missing), len(lines),
@@ -108,7 +120,10 @@ class Translator:
         # page is never retried, which would make a transient outage permanent.
         unresolved = [i for i, r in enumerate(partial) if r is None]
         result = [r if r is not None else lines[i] for i, r in enumerate(partial)]
-        result = self._repair_untranslated(lines, result)
+        if not api_failed:
+            # Skip the repair pass during an outage: every line would look
+            # untranslated and fan the same failure out into one call per line.
+            result = self._repair_untranslated(lines, result)
         self.stats["pages"] += 1
 
         if unresolved:
@@ -163,11 +178,13 @@ class Translator:
     # -------------------------------------------------------------- internal
     def _translate_batch(
         self, lines: list[str], preceding_context: str | None
-    ) -> list[str | None]:
-        """Translate the page as a keyed object; returns one entry per line.
+    ) -> tuple[list[str | None], bool]:
+        """Translate the page as a keyed object; returns (entries, api_failed).
 
         Entries the model omitted (or that failed to parse) come back as ``None``
         so the caller can fill just those, rather than discarding the whole page.
+        ``api_failed`` says the provider could not be reached at all, which tells
+        the caller not to fan the same outage out over one call per line.
         """
         context = ""
         if preceding_context:
@@ -189,13 +206,18 @@ class Translator:
         )
 
         best: list[str | None] = [None] * np_
+        raw = ""
         for attempt in range(self.max_attempts):
-            raw = self._complete(
-                [
-                    {"role": "system", "content": _SYSTEM_BATCH},
-                    {"role": "user", "content": user},
-                ]
-            )
+            try:
+                raw = self._complete(
+                    [
+                        {"role": "system", "content": _SYSTEM_BATCH},
+                        {"role": "user", "content": user},
+                    ]
+                )
+            except TranslationError as exc:
+                logger.error("Batch translation unavailable: %s", exc)
+                return best[:n], True
             obj = _extract_json_object(raw)
             if obj:
                 current = [_batch_value(obj.get(str(i))) for i in range(np_)]
@@ -203,7 +225,7 @@ class Translator:
                 if sum(x is not None for x in current) > sum(x is not None for x in best):
                     best = current
                 if all(x is not None for x in best[:n]):
-                    return best[:n]
+                    return best[:n], False
             logger.debug(
                 "Attempt %d: %d/%d lines present", attempt + 1,
                 sum(x is not None for x in best[:n]), n,
@@ -216,7 +238,7 @@ class Translator:
                 "Missing keys after all attempts: %s. Raw response tail: %r",
                 missing_idx, raw[-300:],
             )
-        return best[:n]
+        return best[:n], False
 
     def _translate_individually(
         self, lines: list[str], preceding_context: str | None
@@ -255,14 +277,16 @@ class Translator:
                 ]
             )
             return _clean_single(raw) or None
-        except Exception as exc:  # noqa: BLE001 - report failure to the caller
+        except (TranslationError, Exception) as exc:  # noqa: BLE001
             logger.debug("Per-line translation failed (%s)", exc)
             return None
 
     def _complete(self, messages: list[dict]) -> str:
-        self.stats["api_calls"] += 1
-        if self.request_pause:
-            time.sleep(self.request_pause)
+        """Call the model, retrying transient provider errors.
+
+        A book is hundreds of sequential calls, so a 429 or a timeout is routine.
+        Letting it escape used to cost the whole page.
+        """
         kwargs: dict = dict(
             model=self.litellm_model,
             messages=messages,
@@ -273,8 +297,28 @@ class Translator:
             kwargs["api_key"] = self.api_key
         if self.api_base:
             kwargs["api_base"] = self.api_base
-        response = litellm.completion(**kwargs)
-        return response.choices[0].message.content or ""
+
+        last_error: Exception | None = None
+        for attempt in range(self.max_attempts):
+            self.stats["api_calls"] += 1
+            if self.request_pause:
+                time.sleep(self.request_pause)
+            try:
+                response = litellm.completion(**kwargs)
+                return response.choices[0].message.content or ""
+            except Exception as exc:  # noqa: BLE001 - any provider error is retryable
+                last_error = exc
+                self.stats["api_errors"] += 1
+                logger.warning(
+                    "API call failed (attempt %d/%d): %s",
+                    attempt + 1, self.max_attempts, exc,
+                )
+                if attempt < self.max_attempts - 1:
+                    time.sleep(_RETRY_BACKOFF * (attempt + 1))
+
+        raise TranslationError(
+            f"provider unreachable after {self.max_attempts} attempt(s): {last_error}"
+        ) from last_error
 
     def _page_key(self, lines: list[str]) -> str:
         raw = "\x1f".join(lines)
@@ -290,6 +334,9 @@ class Translator:
     def close(self) -> None:
         self._cache.close()
 
+
+# Seconds between transport retries; multiplied by the attempt number.
+_RETRY_BACKOFF = 1.5
 
 # Bump to invalidate cached page translations when translation logic changes.
 _CACHE_VERSION = 3

@@ -43,7 +43,7 @@ def test_a_page_that_failed_is_retranslated_once_the_model_recovers(scripted):
     t = scripted([MISSING_ONE, *failures], max_attempts=1)
     assert t.translate_page(SOURCE) == ["First line", "Antra eilute"]
 
-    t._replies = [HEALTHY]  # the provider recovers
+    t.model.replies = [HEALTHY]  # the provider recovers
     assert t.translate_page(SOURCE) == ["First line", "Second line"]
 
 
