@@ -148,7 +148,12 @@ class PdfRenderer:
             start_x = mid - width / 2.0
         else:
             start_x = line.left_x + offset_x
-        start_x = max(1.0, min(start_x, content.width * (2 if offset_x else 1) - width - 1.0))
+        # Keep the line inside its own half of the output page. Clamping against
+        # the whole sheet let a line too long to shrink into the column slide
+        # past x=0 and get drawn across the pristine original half.
+        half_left, half_right = offset_x, offset_x + content.width
+        start_x = min(start_x, half_right - width - 1.0)
+        start_x = max(start_x, half_left + 1.0)
 
         return _LineOp(
             text=text,
