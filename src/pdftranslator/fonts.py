@@ -21,22 +21,19 @@ _SANS_FILE = "NotoSans-Regular.ttf"
 _SERIF_FILE = "NotoSerif-Regular.ttf"
 
 
-def _find_font(filename: str) -> Path:
-    """Locate a bundled font file.
+# Fonts ship inside the package (see pyproject's wheel config) so they resolve
+# identically whether the package is run from a checkout or pip-installed.
+_DATA_DIR = Path(__file__).resolve().parent / "data"
 
-    Looks next to the repo root (two levels up from this file under src/), then
-    the current working directory. Raises if not found so the failure is loud.
-    """
-    candidates = [
-        Path(__file__).resolve().parents[2] / filename,  # repo root (src/pdftranslator/..)
-        Path.cwd() / filename,
-    ]
-    for c in candidates:
-        if c.is_file():
-            return c
+
+def _find_font(filename: str) -> Path:
+    """Locate a bundled font file inside the installed package."""
+    path = _DATA_DIR / filename
+    if path.is_file():
+        return path
     raise FileNotFoundError(
-        f"Bundled font {filename!r} not found. Looked in: "
-        + ", ".join(str(c) for c in candidates)
+        f"Bundled font {filename!r} is missing from the package data directory "
+        f"({_DATA_DIR}). The installation is incomplete."
     )
 
 

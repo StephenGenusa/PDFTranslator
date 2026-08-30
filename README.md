@@ -248,6 +248,7 @@ src/pdftranslator/
   render.py         Base-layer stamp + mask + in-place text overlay
   models.py         Span / Line / PageContent dataclasses
   fonts.py          Bundled Noto Sans/Serif + text-width measurement
+  data/             Noto TTFs, packaged with the wheel
 ```
 
 **Data flow:**
@@ -308,9 +309,11 @@ PDFTranslator/
 │   ├── translate.py      LLM translation + cache
 │   ├── render.py         PDF rendering
 │   ├── models.py         Data models
-│   └── fonts.py          Font management
-├── NotoSans-Regular.ttf  Bundled font (Latin/Cyrillic/Greek sans-serif)
-├── NotoSerif-Regular.ttf Bundled font (Latin/Cyrillic/Greek serif)
+│   ├── fonts.py          Font management
+│   └── data/             Bundled Noto fonts (shipped inside the wheel)
+│       ├── NotoSans-Regular.ttf   Latin/Cyrillic/Greek sans-serif
+│       └── NotoSerif-Regular.ttf  Latin/Cyrillic/Greek serif
+├── tests/
 ├── pyproject.toml
 └── README.md
 ```
