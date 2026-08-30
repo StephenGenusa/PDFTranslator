@@ -9,7 +9,7 @@ from typing import Optional
 
 import typer
 
-from .orchestrator import Orchestrator
+from .orchestrator import Orchestrator, PageRangeError, parse_page_spec
 from .translate import Translator
 
 app = typer.Typer(add_completion=False, help="Layout-preserving PDF translator.")
@@ -67,6 +67,13 @@ def main(
         typer.secho(f"Unknown --mode {mode!r}", fg="red")
         raise typer.Exit(1)
 
+    # Validate the page spec before doing any work, so a typo costs nothing.
+    try:
+        parse_page_spec(pages)
+    except PageRangeError as exc:
+        typer.secho(str(exc), fg="red")
+        raise typer.Exit(1)
+
     translator = Translator(
         model=model,
         target_lang=target_lang,
@@ -80,6 +87,9 @@ def main(
     orchestrator = Orchestrator(translator, mirror=(mode == "side-by-side"))
     try:
         orchestrator.run(input_file, output_file, pages)
+    except PageRangeError as exc:
+        typer.secho(str(exc), fg="red")
+        raise typer.Exit(1)
     finally:
         translator.close()
 

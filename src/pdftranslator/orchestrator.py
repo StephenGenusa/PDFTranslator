@@ -16,6 +16,78 @@ from .translate import Translator
 logger = logging.getLogger(__name__)
 
 
+class PageRangeError(ValueError):
+    """A --pages value that cannot be interpreted."""
+
+
+def parse_page_spec(spec: str) -> list[tuple[int, int]] | None:
+    """Parse a page spec into 1-based inclusive (start, end) pairs.
+
+    Returns ``None`` for "all". Raises :class:`PageRangeError` with a message
+    naming the offending text, so a typo surfaces as an error rather than a
+    ValueError traceback out of int().
+    """
+    text = spec.strip()
+    if text.lower() == "all":
+        return None
+    if not text:
+        raise PageRangeError("Empty page range. Use e.g. '1-5,7' or 'all'.")
+
+    pairs: list[tuple[int, int]] = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, _, b = part.partition("-")
+            start, end = _to_page(a, part), _to_page(b, part)
+            if end < start:
+                raise PageRangeError(
+                    f"Page range {part!r} runs backwards ({start} > {end})."
+                )
+        else:
+            start = end = _to_page(part, part)
+        pairs.append((start, end))
+
+    if not pairs:
+        raise PageRangeError(f"No pages named in {spec!r}. Use e.g. '1-5,7' or 'all'.")
+    return pairs
+
+
+def _to_page(token: str, part: str) -> int:
+    token = token.strip()
+    if not token.isdigit():
+        raise PageRangeError(
+            f"Invalid page number {token!r} in {part!r}. "
+            "Expected whole numbers, e.g. '1-5,7' or 'all'."
+        )
+    number = int(token)
+    if number < 1:
+        raise PageRangeError(
+            f"Invalid page number {number} in {part!r}. Pages are numbered from 1."
+        )
+    return number
+
+
+def resolve_page_spec(spec: str, max_pages: int) -> list[int]:
+    """Resolve a page spec to sorted 0-based page indices within the document."""
+    pairs = parse_page_spec(spec)
+    if pairs is None:
+        return list(range(max_pages))
+
+    indices = {
+        i
+        for start, end in pairs
+        for i in range(start - 1, end)
+        if 0 <= i < max_pages
+    }
+    if not indices:
+        raise PageRangeError(
+            f"Page range {spec!r} selects no pages of this {max_pages}-page document."
+        )
+    return sorted(indices)
+
+
 class Orchestrator:
     def __init__(self, translator: Translator, *, mirror: bool) -> None:
         self._scanner = DocumentScanner()
@@ -27,7 +99,7 @@ class Orchestrator:
         doc = fitz.open(input_path)
         logger.info("Loaded %s (%d pages)", input_path.name, doc.page_count)
 
-        indices = self._parse_range(page_range, doc.page_count)
+        indices = resolve_page_spec(page_range, doc.page_count)
         logger.info("Processing %d page(s)", len(indices))
 
         writer = fitz.open()
@@ -63,22 +135,6 @@ class Orchestrator:
     def _blank_page(self, writer: fitz.Document, source_page: fitz.Page) -> None:
         w, h = source_page.rect.width, source_page.rect.height
         writer.new_page(width=w * 2 if self._mirror else w, height=h)
-
-    @staticmethod
-    def _parse_range(spec: str, max_pages: int) -> list[int]:
-        if spec.strip().lower() == "all":
-            return list(range(max_pages))
-        out: set[int] = set()
-        for part in spec.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            if "-" in part:
-                a, b = part.split("-", 1)
-                out.update(range(int(a) - 1, int(b)))
-            else:
-                out.add(int(part) - 1)
-        return sorted(p for p in out if 0 <= p < max_pages)
 
     def _log_stats(self) -> None:
         s = self._translator.stats
