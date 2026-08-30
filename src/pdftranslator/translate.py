@@ -103,10 +103,23 @@ class Translator:
             for i in missing:
                 partial[i] = self._translate_one(lines[i], page_context, i, len(lines))
 
+        # Lines still unresolved fall back to their source text. That is a
+        # failure, not a translation, so the page must not be cached: a cached
+        # page is never retried, which would make a transient outage permanent.
+        unresolved = [i for i, r in enumerate(partial) if r is None]
         result = [r if r is not None else lines[i] for i, r in enumerate(partial)]
         result = self._repair_untranslated(lines, result)
-        self._cache.set(cache_key, result)
         self.stats["pages"] += 1
+
+        if unresolved:
+            logger.warning(
+                "%d/%d line(s) could not be translated; keeping the source text "
+                "and NOT caching this page so a later run retries it.",
+                len(unresolved), len(lines),
+            )
+            return result
+
+        self._cache.set(cache_key, result)
         return result
 
     def _repair_cached(self, lines: list[str], cached: list[str]) -> list[str]:
@@ -215,12 +228,16 @@ class Translator:
         page_context = "\n".join(lines)
         return [self._translate_one(line, page_context, i, len(lines)) for i, line in enumerate(lines)]
 
-    def _translate_one(self, line: str, page_context: str, idx: int, total: int) -> str:
+    def _translate_one(
+        self, line: str, page_context: str, idx: int, total: int
+    ) -> str | None:
         """Translate a single line with the whole page as context.
 
-        Lines that are essentially a number/symbol (e.g. a chapter number "1")
-        are returned unchanged — asking the model to "translate" them in isolation
-        tends to make it hallucinate a heading.
+        Returns ``None`` when the line could not be translated, so the caller can
+        tell a genuine failure apart from a line that legitimately came back
+        unchanged. Lines that are essentially a number/symbol (e.g. a chapter
+        number "1") are returned unchanged — asking the model to "translate" them
+        in isolation tends to make it hallucinate a heading.
         """
         if sum(c.isalpha() for c in line) < 2:
             return line
@@ -237,10 +254,10 @@ class Translator:
                     {"role": "user", "content": user},
                 ]
             )
-            return _clean_single(raw) or line
-        except Exception as exc:  # noqa: BLE001 - fall back to source text
-            logger.debug("Per-line translation failed (%s); keeping source", exc)
-            return line
+            return _clean_single(raw) or None
+        except Exception as exc:  # noqa: BLE001 - report failure to the caller
+            logger.debug("Per-line translation failed (%s)", exc)
+            return None
 
     def _complete(self, messages: list[dict]) -> str:
         self.stats["api_calls"] += 1
