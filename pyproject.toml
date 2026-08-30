@@ -22,6 +22,11 @@ dependencies = [
 # not need to be declared here. The historical (bloated) 130-package freeze this
 # replaces is kept in archive/requirements.txt for reference.
 
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+]
+
 [project.scripts]
 pdf-translate = "pdftranslator.cli:app"
 
@@ -31,3 +36,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pdftranslator"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
