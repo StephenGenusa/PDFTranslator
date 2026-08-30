@@ -24,15 +24,27 @@ logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM = (
+_SHARED_ROLE = (
     "You are a professional literary translator. You translate a single page of "
     "a book that has been split into individually numbered lines to preserve its "
     "layout. Use the whole page as context to translate accurately and naturally. "
     "Translate each line independently in place: never merge, split, reorder, add, "
     "or drop lines, and keep each translation close in length to its source line. "
     "Preserve names, numbers and punctuation; if a line is purely a number, symbol "
-    "or already in the target language, return it unchanged. Output ONLY the "
-    "requested JSON value — no prose, no commentary, no code fences."
+    "or already in the target language, return it unchanged. "
+)
+
+# The batch call wants a JSON object back.
+_SYSTEM_BATCH = _SHARED_ROLE + (
+    "Output ONLY the requested JSON value — no prose, no commentary, no code fences."
+)
+
+# The per-line call wants one bare line. Reusing the batch prompt here told the
+# model to answer in JSON while the user turn asked for a plain line; compliant
+# models emitted the JSON, which was then stamped onto the page verbatim.
+_SYSTEM_LINE = _SHARED_ROLE + (
+    "Output ONLY the translated line itself — no prose, no commentary, no code "
+    "fences, no quoting, no keys or wrappers of any kind."
 )
 
 
@@ -75,7 +87,7 @@ class Translator:
         cached = self._cache.get(cache_key)
         if isinstance(cached, list) and len(cached) == len(lines):
             self.stats["cache_hits"] += 1
-            return cached
+            return self._repair_cached(lines, [str(v) for v in cached])
 
         # Keyed batch: the model returns an object keyed by line index, so a
         # dropped/extra line is realigned by key instead of shifting everything.
@@ -96,6 +108,25 @@ class Translator:
         self._cache.set(cache_key, result)
         self.stats["pages"] += 1
         return result
+
+    def _repair_cached(self, lines: list[str], cached: list[str]) -> list[str]:
+        """Strip protocol debris from an entry written before the guards existed.
+
+        Falling back to the source line keeps the page readable at no cost; the
+        warning tells the user how to get a real translation for it.
+        """
+        poisoned = [i for i, v in enumerate(cached) if _SENTINEL in v]
+        if not poisoned:
+            return cached
+        logger.warning(
+            "Cached translation for %d line(s) contains internal batch markers; "
+            "using the source text instead. Re-run with --ignore-cache to "
+            "translate them properly.",
+            len(poisoned),
+        )
+        for i in poisoned:
+            cached[i] = lines[i]
+        return cached
 
     def _repair_untranslated(self, lines: list[str], result: list[str]) -> list[str]:
         """Retry any line that came back unchanged but clearly should have been
@@ -148,16 +179,13 @@ class Translator:
         for attempt in range(self.max_attempts):
             raw = self._complete(
                 [
-                    {"role": "system", "content": _SYSTEM},
+                    {"role": "system", "content": _SYSTEM_BATCH},
                     {"role": "user", "content": user},
                 ]
             )
             obj = _extract_json_object(raw)
             if obj:
-                current = [
-                    str(obj[str(i)]) if isinstance(obj.get(str(i)), (str, int, float)) else None
-                    for i in range(np_)
-                ]
+                current = [_batch_value(obj.get(str(i))) for i in range(np_)]
                 # Keep the most complete response across attempts.
                 if sum(x is not None for x in current) > sum(x is not None for x in best):
                     best = current
@@ -205,7 +233,7 @@ class Translator:
         try:
             raw = self._complete(
                 [
-                    {"role": "system", "content": _SYSTEM},
+                    {"role": "system", "content": _SYSTEM_LINE},
                     {"role": "user", "content": user},
                 ]
             )
@@ -319,11 +347,41 @@ def _extract_json_array(raw: str) -> list | None:
     return None
 
 
+def _batch_value(value: object) -> str | None:
+    """Accept one keyed batch value, or None if it is unusable.
+
+    The model occasionally shifts keys and answers a real line with the
+    end-of-batch sentinel; treating that as a translation stamps the raw token
+    onto the page. Rejecting it sends the line down the per-line path instead.
+    """
+    if not isinstance(value, (str, int, float)):
+        return None
+    text = str(value)
+    return None if _SENTINEL in text else text
+
+
 def _clean_single(raw: str) -> str:
+    """Reduce a per-line reply to bare text, or "" if nothing usable remains.
+
+    Returning "" makes the caller keep the source line, which is always better
+    than stamping protocol debris onto the page.
+    """
     text = _FENCE_RE.sub("", raw or "").strip()
-    # If the model wrapped a single string in quotes or a 1-element array.
+
+    # A single string wrapped in a 1-element array.
     if text.startswith("[") and text.endswith("]"):
         arr = _extract_json_array(text)
-        if arr:
-            return str(arr[0]).strip()
-    return text.strip().strip('"').strip()
+        return str(arr[0]).strip() if len(arr or []) == 1 else ""
+
+    # A JSON object: only unambiguous when it holds exactly one value.
+    if text.startswith("{"):
+        obj = _extract_json_object(text)
+        if obj is None or len(obj) != 1:
+            return ""
+        only = next(iter(obj.values()))
+        if not isinstance(only, (str, int, float)):
+            return ""
+        text = str(only).strip()
+
+    text = text.strip().strip('"').strip()
+    return "" if _SENTINEL in text else text
