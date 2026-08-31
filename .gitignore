@@ -185,3 +185,6 @@ cython_debug/
 
 # JetBrains project files -- nothing in here belongs to the project.
 .idea/
+
+# Agent working notes, not project documentation.
+docs/superpowers/
