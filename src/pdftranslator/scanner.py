@@ -10,6 +10,7 @@ merged, which was a real bug in the earlier code.
 from __future__ import annotations
 
 import logging
+import statistics
 from collections import Counter
 
 import pymupdf
@@ -26,6 +27,16 @@ _SCANNED_CHAR_THRESHOLD = 50
 _MARGIN = 50.0  # points; page-number detection band at top/bottom
 _PAGE_NUM_MAX_LEN = 4
 _BASELINE_TOL = 4.0  # points; fragments within this share one visual line
+
+# Paragraph grouping. Lines belong together when they are the same size, follow
+# one another closely, and overlap horizontally. Derived from geometry rather
+# than PyMuPDF's block numbering, which is a parser detail: 1.28 splits the same
+# text into roughly 2.2x more blocks than 1.27, which moved the rendering with it.
+_BLOCK_SIZE_TOL = 0.35   # points of font-size difference tolerated within a block
+_BLOCK_GAP_FACTOR = 2.2  # max baseline gap, as a multiple of the font size
+_EDGE_TOL = 2.5          # points; spread below this counts as a shared edge
+_RAGGED_EDGE = 6.0       # points; spread above this counts as a genuinely ragged edge
+_CENTRE_TOL = 4.0        # points; spread of line midpoints for a centred block
 
 
 class DocumentScanner:
@@ -61,8 +72,12 @@ class DocumentScanner:
         lines = self._merge_baseline_fragments(lines)
 
         text_left, text_right = self._text_column(lines, width)
-        for line in lines:
-            line.align = self._alignment(line, text_left, text_right)
+        blocks = self._group_blocks(lines)
+        for index, block in enumerate(blocks):
+            align = self._block_alignment(block, text_left, text_right)
+            for line in block:
+                line.block_index = index
+                line.align = align
 
         return PageContent(
             page_index=page_index,
@@ -194,6 +209,54 @@ class DocumentScanner:
             block_index=group[0].block_index,
             rotation=0,
         )
+
+    # ----------------------------------------------------------------- blocks
+    @staticmethod
+    def _group_blocks(lines: list[Line]) -> list[list[Line]]:
+        """Group lines into paragraphs by geometry alone."""
+        if not lines:
+            return []
+        ordered = sorted(lines, key=lambda ln: (ln.baseline_y, ln.left_x))
+        blocks: list[list[Line]] = [[ordered[0]]]
+        for line in ordered[1:]:
+            previous = blocks[-1][-1]
+            gap = line.baseline_y - previous.baseline_y
+            same_size = abs(line.size - previous.size) < _BLOCK_SIZE_TOL
+            close = 0 < gap <= _BLOCK_GAP_FACTOR * max(line.size, previous.size)
+            overlaps = (
+                min(line.right_x, previous.right_x)
+                - max(line.left_x, previous.left_x)
+            ) > 0
+            if same_size and close and overlaps:
+                blocks[-1].append(line)
+            else:
+                blocks.append([line])
+        return blocks
+
+    def _block_alignment(
+        self, block: list[Line], text_left: float, text_right: float
+    ) -> str:
+        """One alignment for the whole block, taken from its shared edges.
+
+        A block whose lines start at the same x is left aligned however far that
+        edge sits from the page margin -- an indented footnote block is still
+        left aligned. Deciding this per line instead made an indented justified
+        block look centred, because each line has a left gap and a full-measure
+        line's midpoint lies near the column midpoint.
+        """
+        if len(block) == 1:
+            return self._alignment(block[0], text_left, text_right)
+
+        left_spread = statistics.pstdev([ln.left_x for ln in block])
+        if left_spread <= _EDGE_TOL:
+            return "left"
+        right_spread = statistics.pstdev([ln.right_x for ln in block])
+        if right_spread <= _EDGE_TOL and left_spread > _RAGGED_EDGE:
+            return "right"
+        centres = [(ln.left_x + ln.right_x) / 2.0 for ln in block]
+        if statistics.pstdev(centres) <= _CENTRE_TOL and left_spread > _RAGGED_EDGE:
+            return "center"
+        return "left"
 
     @staticmethod
     def _dominant_span(spans: list[Span]) -> Span:
