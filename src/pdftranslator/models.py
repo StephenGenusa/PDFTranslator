@@ -49,8 +49,7 @@ class Line:
     bold: bool
     color: int
     align: str  # 'left' | 'center' | 'right'
-    italic: bool = False
-    block_index: int = 0  # geometric paragraph id; a block shares one size
+    block_index: int = 0  # source block; lines in a block share one shrink factor
     rotation: int = 0
     translated: Optional[str] = None
 

@@ -14,18 +14,11 @@ from pathlib import Path
 import pymupdf
 
 # Registered (page-scoped) font names we use when calling insert_text.
-# Registered (page-scoped) name -> file, one per style we can draw.
-_FACES = {
-    (False, False, False): ("ptsans", "NotoSans-Regular.ttf"),
-    (False, True, False): ("ptsans-b", "NotoSans-Bold.ttf"),
-    (False, False, True): ("ptsans-i", "NotoSans-Italic.ttf"),
-    (True, False, False): ("ptserif", "NotoSerif-Regular.ttf"),
-    (True, True, False): ("ptserif-b", "NotoSerif-Bold.ttf"),
-    (True, False, True): ("ptserif-i", "NotoSerif-Italic.ttf"),
-}
+SANS = "ptsans"
+SERIF = "ptserif"
 
-SANS = _FACES[(False, False, False)][0]
-SERIF = _FACES[(True, False, False)][0]
+_SANS_FILE = "NotoSans-Regular.ttf"
+_SERIF_FILE = "NotoSerif-Regular.ttf"
 
 
 # Fonts ship inside the package (see pyproject's wheel config) so they resolve
@@ -47,42 +40,28 @@ def _find_font(filename: str) -> Path:
 class FontBook:
     """Holds the font files and provides accurate text measurement.
 
-    A single instance is reused across the whole document. ``pymupdf.Font``
-    objects measure text width precisely for the actual face being drawn, which
-    is what the line fitting relies on. Bold wins over italic when a line is
-    both, since no bold-italic face is bundled.
+    A single instance is reused across the whole document. ``pymupdf.Font`` objects
+    measure text width precisely for the actual face being drawn, which is what
+    the line shrink-to-fit logic relies on.
     """
 
     def __init__(self) -> None:
-        self._paths = {key: _find_font(name) for key, (_, name) in _FACES.items()}
-        self._fonts = {
-            key: pymupdf.Font(fontfile=str(path))
-            for key, path in self._paths.items()
-        }
-        # Kept for callers that only care about the regular faces.
-        self.sans_path = self._paths[(False, False, False)]
-        self.serif_path = self._paths[(True, False, False)]
-
-    @staticmethod
-    def _key(serif: bool, bold: bool, italic: bool) -> tuple[bool, bool, bool]:
-        return (bool(serif), bool(bold), bool(bold) is False and bool(italic))
+        self.sans_path = _find_font(_SANS_FILE)
+        self.serif_path = _find_font(_SERIF_FILE)
+        self._sans = pymupdf.Font(fontfile=str(self.sans_path))
+        self._serif = pymupdf.Font(fontfile=str(self.serif_path))
 
     def register(self, page: pymupdf.Page) -> None:
-        """Register every face on a freshly created output page."""
-        for key, (name, _file) in _FACES.items():
-            page.insert_font(fontname=name, fontfile=str(self._paths[key]))
+        """Register both faces on a freshly created output page."""
+        page.insert_font(fontname=SANS, fontfile=str(self.sans_path))
+        page.insert_font(fontname=SERIF, fontfile=str(self.serif_path))
 
-    def path_for(self, serif: bool, bold: bool = False, italic: bool = False):
-        return self._paths[self._key(serif, bold, italic)]
+    def name_for(self, serif: bool) -> str:
+        return SERIF if serif else SANS
 
-    def name_for(self, serif: bool, bold: bool = False, italic: bool = False) -> str:
-        return _FACES[self._key(serif, bold, italic)][0]
-
-    def measure(self, text: str, fontsize: float, serif: bool,
-                bold: bool = False, italic: bool = False) -> float:
+    def measure(self, text: str, fontsize: float, serif: bool) -> float:
         """Width of ``text`` in points at the given size, for the chosen face."""
         if not text:
             return 0.0
-        return self._fonts[self._key(serif, bold, italic)].text_length(
-            text, fontsize=fontsize
-        )
+        font = self._serif if serif else self._sans
+        return font.text_length(text, fontsize=fontsize)
