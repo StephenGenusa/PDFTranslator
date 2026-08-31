@@ -3,17 +3,30 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from pathlib import Path
 
 import pymupdf
 from tqdm import tqdm
 
 from .fonts import FontBook
+from .models import PageContent
 from .render import DEFAULT_SIZE_FIDELITY, PdfRenderer
 from .scanner import DocumentScanner
 from .translate import Translator
 
 logger = logging.getLogger(__name__)
+
+
+# A line seen on at least this many pages is a running element -- a header,
+# footer or repeated caption -- and must read the same on every one of them.
+RECURRING_PAGE_THRESHOLD = 3
+
+# A candidate translation is only adopted as the canonical one if its length is
+# credible for the source. A misaligned batch can hand a short running head a
+# long body translation; adopting that would spread the error over every page.
+_CANONICAL_MIN_RATIO = 0.4
+_CANONICAL_MAX_RATIO = 2.5
 
 
 class PageRangeError(ValueError):
@@ -119,6 +132,8 @@ class Orchestrator:
         logger.info("Processing %d page(s)", len(indices))
 
         prev_tail: str | None = None
+        recurring = self._recurring_lines(doc, indices)
+        canonical: dict[str, str] = {}
 
         for idx in tqdm(indices, desc="Pages"):
             source_page = doc[idx]
@@ -129,11 +144,14 @@ class Orchestrator:
                     logger.warning("Page %d looks scanned (no text layer); copying as-is", idx + 1)
 
                 if content.lines:
+                    # The whole page is still sent, so the page's cache key is
+                    # unchanged; recurring lines are reconciled afterwards.
                     translations = self._translator.translate_page(
                         [ln.text for ln in content.lines], preceding_context=prev_tail
                     )
                     for line, tr in zip(content.lines, translations):
                         line.translated = tr
+                    self._apply_canonical(content, recurring, canonical)
                     prev_tail = content.lines[-1].text
 
                 self._renderer.render_page(
@@ -151,6 +169,43 @@ class Orchestrator:
         logger.info("Saved %s", output_path)
         self._log_stats()
         return True
+
+    def _recurring_lines(self, doc: pymupdf.Document, indices: list[int]) -> set[str]:
+        """Source lines that appear on RECURRING_PAGE_THRESHOLD or more pages."""
+        counts: Counter[str] = Counter()
+        for index in indices:
+            content = self._scanner.extract(doc[index], index)
+            counts.update({line.text for line in content.lines})
+        recurring = {
+            text for text, seen in counts.items()
+            if seen >= RECURRING_PAGE_THRESHOLD
+        }
+        if recurring:
+            logger.info(
+                "%d recurring line(s) will be kept consistent across pages",
+                len(recurring),
+            )
+        return recurring
+
+    @staticmethod
+    def _apply_canonical(
+        content: PageContent, recurring: set[str], canonical: dict[str, str]
+    ) -> None:
+        """Give every occurrence of a recurring line the same translation."""
+        for line in content.lines:
+            if line.text not in recurring or line.translated is None:
+                continue
+            settled = canonical.get(line.text)
+            if settled is not None:
+                line.translated = settled
+                continue
+            source_length = len(line.text.strip())
+            ratio = (
+                len(line.translated.strip()) / source_length
+                if source_length else 1.0
+            )
+            if _CANONICAL_MIN_RATIO <= ratio <= _CANONICAL_MAX_RATIO:
+                canonical[line.text] = line.translated
 
     @staticmethod
     def _discard_pages_after(writer: pymupdf.Document, count: int) -> None:
