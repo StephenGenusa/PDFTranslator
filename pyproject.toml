@@ -36,10 +36,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pdftranslator"]
-artifacts = ["src/pdftranslator/data/*.ttf"]
+artifacts = ["src/pdftranslator/data/*"]
 
 [tool.hatch.build.targets.sdist]
-artifacts = ["src/pdftranslator/data/*.ttf"]
+artifacts = ["src/pdftranslator/data/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -52,3 +52,32 @@ def test_built_wheel_contains_the_bundled_fonts(tmp_path):
     names = zipfile.ZipFile(wheels[-1]).namelist()
     assert "pdftranslator/data/NotoSans-Regular.ttf" in names, names
     assert "pdftranslator/data/NotoSerif-Regular.ttf" in names, names
+
+
+def test_bundled_fonts_ship_with_their_licence():
+    """The Noto faces are OFL-1.1: redistributing them requires shipping the
+    licence and copyright notice alongside. Breaks if the file is removed."""
+    licence = PACKAGE_DIR / "data" / "LICENSE-OFL.txt"
+    assert licence.is_file(), f"missing {licence}"
+    text = licence.read_text(encoding="utf-8")
+    assert "SIL OPEN FONT LICENSE Version 1.1" in text
+    assert "Copyright 2015-2021 Google LLC" in text
+    assert "PERMISSION & CONDITIONS" in text
+
+
+def test_built_wheel_contains_the_font_licence(tmp_path):
+    """Shipping the TTFs in the wheel without the licence is the actual
+    redistribution problem; the file on disk alone does not fix it."""
+    if shutil.which("uv") is None:
+        pytest.skip("uv not available")
+    result = subprocess.run(
+        ["uv", "build", "--wheel", "-o", str(tmp_path)],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr[-500:]
+    wheels = sorted(tmp_path.glob("pdftranslator-*.whl"))
+    assert wheels, "no wheel produced"
+    names = zipfile.ZipFile(wheels[-1]).namelist()
+    assert "pdftranslator/data/LICENSE-OFL.txt" in names, names
