@@ -90,7 +90,7 @@ class Translator:
             return []
 
         cache_key = self._page_key(lines)
-        cached = self._cache.get(cache_key)
+        cached = self._lookup(lines, cache_key)
         if isinstance(cached, list) and len(cached) == len(lines):
             self.stats["cache_hits"] += 1
             return self._repair_cached(lines, [str(v) for v in cached])
@@ -321,11 +321,33 @@ class Translator:
         ) from last_error
 
     def _page_key(self, lines: list[str]) -> str:
-        raw = "\x1f".join(lines)
-        digest = hashlib.sha256(
+        """Cache identity for a page, ignoring incidental whitespace.
+
+        PyMuPDF 1.28 collapses runs of spaces that 1.27 preserved (an artifact of
+        justified text, not content). Hashing the raw strings meant a library
+        upgrade silently missed every entry and re-translated -- and re-paid for
+        -- the whole book. Normalising the key makes it version independent.
+        """
+        return self._digest("\x1f".join(_normalise(ln) for ln in lines))
+
+    def _legacy_page_key(self, lines: list[str]) -> str:
+        """The pre-normalisation key, for reading caches written before it."""
+        return self._digest("\x1f".join(lines))
+
+    def _digest(self, raw: str) -> str:
+        return hashlib.sha256(
             f"v{_CACHE_VERSION}|{self.litellm_model}|{self.target_lang}|{raw}".encode("utf-8")
         ).hexdigest()
-        return digest
+
+    def _lookup(self, lines: list[str], cache_key: str) -> list | None:
+        """Read the cache, migrating an entry written under the legacy key."""
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        legacy = self._cache.get(self._legacy_page_key(lines))
+        if legacy is not None:
+            self._cache.set(cache_key, legacy)  # pay the legacy lookup once
+        return legacy
 
     def clear_cache(self) -> None:
         self._cache.clear()
@@ -333,6 +355,14 @@ class Translator:
 
     def close(self) -> None:
         self._cache.close()
+
+
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalise(text: str) -> str:
+    """Collapse whitespace runs so extraction quirks do not change identity."""
+    return _WHITESPACE_RE.sub(" ", text).strip()
 
 
 # Seconds between transport retries; multiplied by the attempt number.
