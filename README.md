@@ -287,7 +287,7 @@ fitz.Page
 | Issue | Status |
 |-------|--------|
 | Translated lines are ragged-right (not re-justified) | Planned: word-spacing fill to match original column width |
-| Long translations shrink font size to fit | By design (no overflow/collision); cosmetic only |
+| Long translations shrink font size to fit | By design (no overflow/collision); one factor per page, so relative sizes are preserved |
 | Background mask is flat colour | Works well on solid pages; visible over photos/gradients |
 | Multi-column layouts and tables | Single text-column assumed; columns may merge |
 | Bold / italic not reproduced | Only Noto Regular bundled; per-span weight/style is planned |

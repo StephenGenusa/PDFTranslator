@@ -90,7 +90,7 @@ def measure(pages: str = "2-25") -> dict:
                 ):
                     line.translated = tr
 
-                scales = renderer._block_scales(content)
+                page_scale = renderer._page_scale(content)
                 blocks_per_page.append(
                     len({ln.block_index for ln in content.lines})
                 )
@@ -98,7 +98,7 @@ def measure(pages: str = "2-25") -> dict:
                 rendered = []
                 for line in content.lines:
                     own_fit = renderer._fit_scale(line, content)
-                    scale = min(scales.get(line.block_index, 1.0), own_fit)
+                    scale = min(page_scale, own_fit)
                     size = max(MIN_FONT_SIZE, line.size * scale)
                     over_shrink.append(max(0.0, own_fit - scale))
                     lines_total += 1
