@@ -56,6 +56,21 @@ def main(
     ignore_cache: bool = typer.Option(
         False, "--ignore-cache", help="Clear the translation cache before running."
     ),
+    request_pause: float = typer.Option(
+        0.0, "--request-pause",
+        help="Seconds to wait before each API call. Use to stay under a "
+             "provider's rate limit.",
+    ),
+    max_tokens: int = typer.Option(
+        8192, "--max-tokens",
+        help="Maximum tokens per model response. Raise it if dense pages come "
+             "back truncated; lower it to cap per-call cost.",
+    ),
+    max_attempts: int = typer.Option(
+        3, "--max-attempts",
+        help="Attempts per API call before giving up on a page, and retries of "
+             "a batch that parses incompletely.",
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Debug logging."),
 ) -> None:
     logging.basicConfig(
@@ -81,12 +96,22 @@ def main(
         typer.secho(str(exc), fg="red")
         raise typer.Exit(1)
 
+    if max_attempts < 1:
+        typer.secho("--max-attempts must be at least 1", fg="red")
+        raise typer.Exit(1)
+    if request_pause < 0:
+        typer.secho("--request-pause cannot be negative", fg="red")
+        raise typer.Exit(1)
+
     translator = Translator(
         model=model,
         target_lang=target_lang,
         api_key=api_key,
         api_base=api_base,
         cache_dir=str(cache_dir),
+        request_pause=request_pause,
+        max_tokens=max_tokens,
+        max_attempts=max_attempts,
     )
     if ignore_cache:
         translator.clear_cache()

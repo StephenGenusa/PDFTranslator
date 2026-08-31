@@ -190,6 +190,9 @@ Options:
       --api-base   TEXT    Provider base URL override (for local providers, e.g. http://localhost:1234/v1)
       --cache-dir  PATH    Translation cache directory  [default: .translation_cache]
       --ignore-cache       Discard cached translations before running
+      --request-pause FLOAT  Seconds to wait before each API call  [default: 0]
+      --max-tokens INT     Max tokens per model response  [default: 8192]
+      --max-attempts INT   Attempts per API call before giving up  [default: 3]
   -v, --verbose            Debug logging
       --help               Show this message and exit
 ```
@@ -206,6 +209,9 @@ Options:
 | API key | *(provider env var)* | Provider env var (e.g. `OPENROUTER_API_KEY`) or `--api-key` to override |
 | API base URL | *(provider default)* | `--api-base` (local providers only) |
 | Cache directory | `.translation_cache/` | `--cache-dir` |
+| Rate limiting | *(no pause)* | `--request-pause` |
+| Response size | 8192 tokens | `--max-tokens` |
+| Retry attempts | 3 | `--max-attempts` |
 
 ### Choosing a model
 
