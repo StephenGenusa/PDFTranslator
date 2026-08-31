@@ -71,6 +71,15 @@ def main(
             "than the source."
         ),
     ),
+    concurrency: int = typer.Option(
+        4, "--concurrency", "-j",
+        help=(
+            "Pages to translate at once. Rate-limit responses are obeyed: when "
+            "the provider asks us to wait, every worker waits and the number of "
+            "requests in flight is reduced, widening again once calls succeed. "
+            "Use 1 for strictly sequential translation."
+        ),
+    ),
     request_pause: float = typer.Option(
         0.0, "--request-pause",
         help="Seconds to wait before each API call. Use to stay under a "
@@ -111,6 +120,9 @@ def main(
         typer.secho(str(exc), fg="red")
         raise typer.Exit(1)
 
+    if concurrency < 1:
+        typer.secho("--concurrency must be at least 1", fg="red")
+        raise typer.Exit(1)
     if not 0.0 <= size_fidelity <= 1.0:
         typer.secho("--size-fidelity must be between 0.0 and 1.0", fg="red")
         raise typer.Exit(1)
@@ -128,6 +140,7 @@ def main(
         api_base=api_base,
         cache_dir=str(cache_dir),
         ignore_cache=ignore_cache,
+        max_concurrency=concurrency,
         request_pause=request_pause,
         max_tokens=max_tokens,
         max_attempts=max_attempts,
@@ -136,6 +149,7 @@ def main(
         translator,
         mirror=(mode == "side-by-side"),
         size_fidelity=size_fidelity,
+        concurrency=concurrency,
     )
     try:
         orchestrator.run(input_file, output_file, pages)

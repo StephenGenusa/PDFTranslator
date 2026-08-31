@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pymupdf
@@ -108,11 +109,15 @@ class Orchestrator:
         *,
         mirror: bool,
         size_fidelity: float = DEFAULT_SIZE_FIDELITY,
+        concurrency: int = 1,
     ) -> None:
         self._scanner = DocumentScanner()
         self._renderer = PdfRenderer(FontBook(), size_fidelity=size_fidelity)
         self._translator = translator
         self._mirror = mirror
+        self._concurrency = max(1, int(concurrency or 1))
+        # One owner for how many requests may be in flight.
+        translator.set_max_concurrency(self._concurrency)
 
     def run(self, input_path: Path, output_path: Path, page_range: str = "all") -> bool:
         with pymupdf.open(input_path) as doc, pymupdf.open() as writer:
@@ -131,37 +136,74 @@ class Orchestrator:
         indices = resolve_page_spec(page_range, doc.page_count)
         logger.info("Processing %d page(s)", len(indices))
 
-        prev_tail: str | None = None
         recurring = self._survey(doc, indices)
         canonical: dict[str, str] = {}
 
-        for idx in tqdm(indices, desc="Pages"):
-            source_page = doc[idx]
+        # Extract every page first, so each page's preceding context is fixed
+        # before translation starts. Threading that context through a running
+        # loop would make the result depend on the order threads happened to
+        # finish; taken from the source it is the same at any concurrency.
+        contents = {index: self._scanner.extract(doc[index], index)
+                    for index in indices}
+        context = {}
+        previous: str | None = None
+        for index in indices:
+            context[index] = previous
+            lines = contents[index].lines
+            previous = lines[-1].text if lines else previous
+
+        failed: set[int] = set()
+
+        def translate(index: int) -> None:
+            content = contents[index]
+            if not content.lines:
+                return
+            try:
+                translations = self._translator.translate_page(
+                    [line.text for line in content.lines],
+                    preceding_context=context[index],
+                )
+            except Exception as exc:  # noqa: BLE001 - never lose the whole run
+                # A page that cannot be translated is emitted as the original,
+                # exactly as before translation moved out of the render loop.
+                logger.error("Page %d failed to translate: %s", index + 1, exc,
+                             exc_info=True)
+                failed.add(index)
+                return
+            for line, translated in zip(content.lines, translations):
+                line.translated = translated
+
+        if self._concurrency > 1:
+            logger.info("Translating with up to %d concurrent request(s)",
+                        self._concurrency)
+            with ThreadPoolExecutor(max_workers=self._concurrency) as pool:
+                list(tqdm(pool.map(translate, indices), total=len(indices),
+                          desc="Translating"))
+        else:
+            for index in tqdm(indices, desc="Translating"):
+                translate(index)
+
+        # Rendering stays strictly in source order.
+        for index in tqdm(indices, desc="Rendering"):
+            source_page = doc[index]
             pages_before = writer.page_count
             try:
-                content = self._scanner.extract(source_page, idx)
+                if index in failed:
+                    self._untranslated_page(writer, source_page)
+                    continue
+                content = contents[index]
                 if content.is_scanned:
-                    logger.warning("Page %d looks scanned (no text layer); copying as-is", idx + 1)
-
-                if content.lines:
-                    # The whole page is still sent, so the page's cache key is
-                    # unchanged; recurring lines are reconciled afterwards.
-                    translations = self._translator.translate_page(
-                        [ln.text for ln in content.lines], preceding_context=prev_tail
+                    logger.warning(
+                        "Page %d looks scanned (no text layer); copying as-is",
+                        index + 1,
                     )
-                    for line, tr in zip(content.lines, translations):
-                        line.translated = tr
+                if content.lines:
                     self._apply_canonical(content, recurring, canonical)
-                    prev_tail = content.lines[-1].text
-
                 self._renderer.render_page(
                     writer, source_page, content, mirror=self._mirror
                 )
             except Exception as exc:  # noqa: BLE001 - never abort the whole run
-                logger.error("Page %d failed: %s", idx + 1, exc, exc_info=True)
-                # render_page appends its output page before it can fail, so any
-                # half-written page must go before the replacement is added --
-                # otherwise a failed page shifts the rest of the book by one.
+                logger.error("Page %d failed: %s", index + 1, exc, exc_info=True)
                 self._discard_pages_after(writer, pages_before)
                 self._untranslated_page(writer, source_page)
 

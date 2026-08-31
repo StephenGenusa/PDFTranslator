@@ -14,10 +14,13 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 
 import litellm
 from diskcache import Cache
+
+from .ratelimit import RateLimitGate, retry_after_seconds
 
 litellm.suppress_debug_info = True
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
@@ -65,6 +68,7 @@ class Translator:
         max_attempts: int = 3,
         request_pause: float = 0.0,
         ignore_cache: bool = False,
+        max_concurrency: int = 1,
     ) -> None:
         self.litellm_model = model  # full litellm model string, e.g. "openrouter/google/gemini-2.5-flash-lite"
         self.target_lang = target_lang
@@ -77,6 +81,9 @@ class Translator:
         # actually processed are refreshed and the rest of the book is untouched.
         self.ignore_cache = ignore_cache
         self._cache = Cache(cache_dir)
+        # Shared by every worker: a rate-limit notice holds all of them.
+        self.gate = RateLimitGate(max_concurrency)
+        self._stats_lock = threading.Lock()
         self.stats = {
             "pages": 0,
             "api_calls": 0,
@@ -90,6 +97,7 @@ class Translator:
             "cost_usd": 0.0,
             "truncated": 0,
             "misaligned": 0,
+            "rate_limited": 0,
         }
 
     # ------------------------------------------------------------------- API
@@ -103,7 +111,7 @@ class Translator:
         cache_key = self._page_key(lines)
         cached = None if self.ignore_cache else self._lookup(lines, cache_key)
         if isinstance(cached, list) and len(cached) == len(lines):
-            self.stats["cache_hits"] += 1
+            self._bump("cache_hits")
             return self._repair_cached(lines, [str(v) for v in cached])
 
         # Keyed batch: the model returns an object keyed by line index, so a
@@ -121,7 +129,7 @@ class Translator:
                 "Batch left %d/%d line(s) untranslated; filling per line.",
                 len(missing), len(lines),
             )
-            self.stats["fallbacks"] += 1
+            self._bump("fallbacks")
             page_context = "\n".join(lines)
             for i in missing:
                 partial[i] = self._translate_one(lines[i], page_context, i, len(lines))
@@ -135,7 +143,7 @@ class Translator:
             # Skip the repair pass during an outage: every line would look
             # untranslated and fan the same failure out into one call per line.
             result = self._repair_untranslated(lines, result)
-        self.stats["pages"] += 1
+        self._bump("pages")
 
         if unresolved:
             logger.warning(
@@ -240,7 +248,7 @@ class Translator:
                 current = [_batch_value(obj.get(str(i))) for i in range(np_)]
                 # Keep the most complete response across attempts.
                 if _misaligned(lines, current[:n]):
-                    self.stats["misaligned"] += 1
+                    self._bump("misaligned")
                     logger.warning(
                         "Batch looks misaligned (a translation reused, or badly "
                         "the wrong length for its line); retrying."
@@ -318,26 +326,35 @@ class Translator:
 
         last_error: Exception | None = None
         for attempt in range(self.max_attempts):
-            self.stats["api_calls"] += 1
+            self._bump("api_calls")
             if self.request_pause:
                 time.sleep(self.request_pause)
             try:
-                response = litellm.completion(**kwargs)
+                with self.gate.slot():
+                    response = litellm.completion(**kwargs)
+                self.gate.record_success()
                 self._record_usage(response)
                 if _finish_reason(response) == "length":
                     # The response hit max_tokens, so its tail is missing. This
                     # is the likeliest cause of the "model drops the last key"
                     # behaviour the sentinel padding works around.
-                    self.stats["truncated"] += 1
+                    self._bump("truncated")
                     logger.warning(
                         "Response was cut off at max_tokens (%d); the tail of "
                         "the page is missing. Raise --max-tokens for this "
                         "document.", self.max_tokens,
                     )
                 return response.choices[0].message.content or ""
+            except litellm.RateLimitError as exc:
+                # Not a transient error: the provider told us to wait. Hold
+                # every worker for as long as it asked.
+                last_error = exc
+                self._bump("api_errors")
+                self._bump("rate_limited")
+                self.gate.penalise(retry_after_seconds(exc))
             except Exception as exc:  # noqa: BLE001 - any provider error is retryable
                 last_error = exc
-                self.stats["api_errors"] += 1
+                self._bump("api_errors")
                 logger.warning(
                     "API call failed (attempt %d/%d): %s",
                     attempt + 1, self.max_attempts, exc,
@@ -349,6 +366,11 @@ class Translator:
             f"provider unreachable after {self.max_attempts} attempt(s): {last_error}"
         ) from last_error
 
+    def _bump(self, key: str, amount: float = 1) -> None:
+        """Counters are touched from several worker threads."""
+        with self._stats_lock:
+            self.stats[key] += amount
+
     def _record_usage(self, response: object) -> None:
         """Accumulate tokens and what the provider says the call cost.
 
@@ -357,10 +379,10 @@ class Translator:
         """
         usage = getattr(response, "usage", None)
         if usage is not None:
-            self.stats["prompt_tokens"] += int(getattr(usage, "prompt_tokens", 0) or 0)
-            self.stats["completion_tokens"] += int(
-                getattr(usage, "completion_tokens", 0) or 0
-            )
+            self._bump("prompt_tokens",
+                       int(getattr(usage, "prompt_tokens", 0) or 0))
+            self._bump("completion_tokens",
+                       int(getattr(usage, "completion_tokens", 0) or 0))
         cost = (getattr(response, "_hidden_params", None) or {}).get("response_cost")
         if cost is None:
             try:
@@ -368,7 +390,7 @@ class Translator:
             except Exception:  # noqa: BLE001 - unmapped model, no price known
                 cost = None
         if cost:
-            self.stats["cost_usd"] += float(cost)
+            self._bump("cost_usd", float(cost))
 
     def _page_key(self, lines: list[str]) -> str:
         """Cache identity for a page, ignoring incidental whitespace.
@@ -388,6 +410,10 @@ class Translator:
         return hashlib.sha256(
             f"v{_CACHE_VERSION}|{self.litellm_model}|{self.target_lang}|{raw}".encode("utf-8")
         ).hexdigest()
+
+    def set_max_concurrency(self, max_concurrency: int) -> None:
+        """Match the gate to the number of workers that will actually run."""
+        self.gate.set_max(max_concurrency)
 
     def estimate_page_tokens(self, lines: list[str], include_output: bool = True) -> int:
         """Tokens one page is expected to consume, both directions.
@@ -465,7 +491,7 @@ class Translator:
             # unexplained, so keep both rather than discard work.
             if legacy_key != cache_key and self._cache.get(legacy_key) == cached:
                 self._cache.delete(legacy_key)
-                self.stats["cache_pruned"] += 1
+                self._bump("cache_pruned")
             return cached
 
         legacy = self._cache.get(legacy_key)
@@ -476,7 +502,7 @@ class Translator:
         if self._cache.get(cache_key) == legacy:
             # Only now is the duplicate safe to drop.
             self._cache.delete(legacy_key)
-            self.stats["cache_migrated"] += 1
+            self._bump("cache_migrated")
         else:
             logger.warning(
                 "Could not rewrite a cached page under the current key; "
