@@ -51,6 +51,13 @@ _SYSTEM_LINE = _SHARED_ROLE + (
 )
 
 
+_BATCH_USER_TEMPLATE = (
+    "{context}Translate the VALUES of this JSON object into {target_lang}. "
+    'Return a JSON object with the exact same keys ("0" through "{last_key}"), '
+    "each value replaced by its translation.\n\n{payload}"
+)
+
+
 class TranslationError(RuntimeError):
     pass
 
@@ -223,11 +230,11 @@ class Translator:
         padded = lines + [_SENTINEL]
         np_ = len(padded)
         numbered = {str(i): ln for i, ln in enumerate(padded)}
-        user = (
-            f"{context}Translate the VALUES of this JSON object into "
-            f"{self.target_lang}. Return a JSON object with the exact same keys "
-            f'("0" through "{np_ - 1}"), each value replaced by its '
-            f"translation.\n\n{json.dumps(numbered, ensure_ascii=False)}"
+        user = _BATCH_USER_TEMPLATE.format(
+            context=context,
+            target_lang=self.target_lang,
+            last_key=np_ - 1,
+            payload=json.dumps(numbered, ensure_ascii=False),
         )
 
         best: list[str | None] = [None] * np_
@@ -393,18 +400,35 @@ class Translator:
             self._bump("cost_usd", float(cost))
 
     def _page_key(self, lines: list[str]) -> str:
-        """Cache identity for a page, ignoring incidental whitespace.
+        """Cache identity for a page.
 
-        PyMuPDF 1.28 collapses runs of spaces that 1.27 preserved (an artifact of
-        justified text, not content). Hashing the raw strings meant a library
-        upgrade silently missed every entry and re-translated -- and re-paid for
-        -- the whole book. Normalising the key makes it version independent.
+        Covers the model, the target language, the source text and the prompt
+        the translation will be produced under. Whitespace is normalised because
+        PyMuPDF 1.28 collapses runs of spaces that 1.27 preserved -- an artifact
+        of justified text, not content -- and hashing the raw strings meant a
+        library upgrade missed every entry and re-paid for the whole book.
+
+        The prompt is included because a translation only means what the
+        instructions that produced it meant; editing one used to reuse the older
+        results silently unless somebody bumped _CACHE_VERSION by hand.
+        max_tokens is deliberately excluded: a response limit does not change
+        what a correct translation is, and keying on it would throw away good
+        work every time it was tuned.
         """
-        return self._digest("\x1f".join(_normalise(ln) for ln in lines))
+        return self._digest(
+            f"{_prompt_fingerprint()}|" + "\x1f".join(_normalise(ln) for ln in lines)
+        )
 
-    def _legacy_page_key(self, lines: list[str]) -> str:
-        """The pre-normalisation key, for reading caches written before it."""
-        return self._digest("\x1f".join(lines))
+    def _superseded_page_keys(self, lines: list[str]) -> list[str]:
+        """Keys earlier versions stored this page under, newest scheme first.
+
+        Consulted so that translations already paid for are never orphaned when
+        the scheme changes.
+        """
+        return [
+            self._digest("\x1f".join(_normalise(ln) for ln in lines)),  # pre-prompt
+            self._digest("\x1f".join(lines)),                           # pre-normalisation
+        ]
 
     def _digest(self, raw: str) -> str:
         return hashlib.sha256(
@@ -457,7 +481,7 @@ class Translator:
         reported without rewriting the cache. Checking only the current scheme
         is what once made 311 already-translated pages look missing.
         """
-        for key in (self._page_key(lines), self._legacy_page_key(lines)):
+        for key in [self._page_key(lines), *self._superseded_page_keys(lines)]:
             value = self._cache.get(key)
             if isinstance(value, list) and len(value) == len(lines):
                 return True
@@ -469,49 +493,60 @@ class Translator:
         Read-only. Entries written before misalignment detection existed still
         carry the damage, and serving them silently hides it.
         """
-        for key in (self._page_key(lines), self._legacy_page_key(lines)):
+        for key in [self._page_key(lines), *self._superseded_page_keys(lines)]:
             value = self._cache.get(key)
             if isinstance(value, list) and len(value) == len(lines):
                 return _misaligned(lines, [str(v) for v in value])
         return False
 
     def _lookup(self, lines: list[str], cache_key: str) -> list | None:
-        """Read the cache, converting an entry written under the legacy key.
+        """Read the cache, converting entries written under an older scheme.
 
-        A cached translation is paid-for work, so the old key is removed only
+        A cached translation is paid-for work, so an old key is removed only
         after the new one has been written and read back. An entry that cannot
         be re-keyed is never touched -- it may belong to another document.
         """
-        legacy_key = self._legacy_page_key(lines)
+        superseded = [k for k in self._superseded_page_keys(lines) if k != cache_key]
+
         cached = self._cache.get(cache_key)
         if cached is not None:
-            # An earlier migration may have written the new key without removing
-            # the old one. Drop the duplicate only because the current key
-            # already holds this very translation; if the two disagree, that is
-            # unexplained, so keep both rather than discard work.
-            if legacy_key != cache_key and self._cache.get(legacy_key) == cached:
-                self._cache.delete(legacy_key)
-                self._bump("cache_pruned")
+            # An earlier version may have left a duplicate behind. Drop it only
+            # because the current key already holds this very translation; if
+            # the two disagree that is unexplained, so keep both.
+            for old_key in superseded:
+                if self._cache.get(old_key) == cached:
+                    self._cache.delete(old_key)
+                    self._bump("cache_pruned")
             return cached
 
-        legacy = self._cache.get(legacy_key)
-        if legacy is None:
-            return None
-
-        self._cache.set(cache_key, legacy)
-        if self._cache.get(cache_key) == legacy:
-            # Only now is the duplicate safe to drop.
-            self._cache.delete(legacy_key)
-            self._bump("cache_migrated")
-        else:
-            logger.warning(
-                "Could not rewrite a cached page under the current key; "
-                "keeping the existing entry."
-            )
-        return legacy
+        for old_key in superseded:
+            found = self._cache.get(old_key)
+            if found is None:
+                continue
+            self._cache.set(cache_key, found)
+            if self._cache.get(cache_key) == found:
+                self._cache.delete(old_key)   # only now is the old copy safe to drop
+                self._bump("cache_migrated")
+            else:
+                logger.warning(
+                    "Could not rewrite a cached page under the current key; "
+                    "keeping the existing entry."
+                )
+            return found
+        return None
 
     def close(self) -> None:
         self._cache.close()
+
+
+def _prompt_fingerprint() -> str:
+    """Short digest of the instructions a translation is produced under.
+
+    Read from the module at call time, so editing a prompt takes effect at once
+    instead of depending on someone remembering to bump _CACHE_VERSION.
+    """
+    blob = "\x1e".join((_SYSTEM_BATCH, _SYSTEM_LINE, _BATCH_USER_TEMPLATE))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
 def _finish_reason(response: object) -> str | None:
