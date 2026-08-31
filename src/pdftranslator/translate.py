@@ -85,6 +85,10 @@ class Translator:
             "api_errors": 0,
             "cache_migrated": 0,
             "cache_pruned": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost_usd": 0.0,
+            "truncated": 0,
         }
 
     # ------------------------------------------------------------------- API
@@ -307,6 +311,17 @@ class Translator:
                 time.sleep(self.request_pause)
             try:
                 response = litellm.completion(**kwargs)
+                self._record_usage(response)
+                if _finish_reason(response) == "length":
+                    # The response hit max_tokens, so its tail is missing. This
+                    # is the likeliest cause of the "model drops the last key"
+                    # behaviour the sentinel padding works around.
+                    self.stats["truncated"] += 1
+                    logger.warning(
+                        "Response was cut off at max_tokens (%d); the tail of "
+                        "the page is missing. Raise --max-tokens for this "
+                        "document.", self.max_tokens,
+                    )
                 return response.choices[0].message.content or ""
             except Exception as exc:  # noqa: BLE001 - any provider error is retryable
                 last_error = exc
@@ -321,6 +336,27 @@ class Translator:
         raise TranslationError(
             f"provider unreachable after {self.max_attempts} attempt(s): {last_error}"
         ) from last_error
+
+    def _record_usage(self, response: object) -> None:
+        """Accumulate tokens and what the provider says the call cost.
+
+        The charge is read from the response rather than derived from a price
+        table, which does not know every model routed through OpenRouter.
+        """
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            self.stats["prompt_tokens"] += int(getattr(usage, "prompt_tokens", 0) or 0)
+            self.stats["completion_tokens"] += int(
+                getattr(usage, "completion_tokens", 0) or 0
+            )
+        cost = (getattr(response, "_hidden_params", None) or {}).get("response_cost")
+        if cost is None:
+            try:
+                cost = litellm.completion_cost(completion_response=response)
+            except Exception:  # noqa: BLE001 - unmapped model, no price known
+                cost = None
+        if cost:
+            self.stats["cost_usd"] += float(cost)
 
     def _page_key(self, lines: list[str]) -> str:
         """Cache identity for a page, ignoring incidental whitespace.
@@ -391,6 +427,11 @@ class Translator:
 
     def close(self) -> None:
         self._cache.close()
+
+
+def _finish_reason(response: object) -> str | None:
+    choices = getattr(response, "choices", None) or []
+    return getattr(choices[0], "finish_reason", None) if choices else None
 
 
 _WHITESPACE_RE = re.compile(r"\s+")

@@ -13,8 +13,9 @@ class _Reply:
 
     def __init__(self, content: str) -> None:
         message = type("Message", (), {"content": content})()
-        choice = type("Choice", (), {"message": message})()
+        choice = type("Choice", (), {"message": message, "finish_reason": "stop"})()
         self.choices = [choice]
+        self._hidden_params: dict = {}
 
 
 class ScriptedModel:
@@ -37,6 +38,8 @@ class ScriptedModel:
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
+        if hasattr(reply, "choices"):
+            return reply          # a caller-built response carrying usage etc.
         return _Reply(reply)
 
 

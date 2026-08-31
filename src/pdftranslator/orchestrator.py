@@ -244,8 +244,14 @@ class Orchestrator:
         s = self._translator.stats
         logger.info(
             "Translation stats: pages=%d api_calls=%d cache_hits=%d "
-            "fallbacks=%d api_errors=%d cache_migrated=%d cache_pruned=%d",
+            "fallbacks=%d api_errors=%d truncated=%d cache_migrated=%d "
+            "cache_pruned=%d",
             s["pages"], s["api_calls"], s["cache_hits"], s["fallbacks"],
-            s.get("api_errors", 0), s.get("cache_migrated", 0),
-            s.get("cache_pruned", 0),
+            s.get("api_errors", 0), s.get("truncated", 0),
+            s.get("cache_migrated", 0), s.get("cache_pruned", 0),
+        )
+        logger.info(
+            "Tokens: prompt=%d completion=%d | reported spend: $%.4f",
+            s.get("prompt_tokens", 0), s.get("completion_tokens", 0),
+            s.get("cost_usd", 0.0),
         )
