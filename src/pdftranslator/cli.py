@@ -11,6 +11,7 @@ from typing import Optional
 import typer
 
 from .orchestrator import Orchestrator, PageRangeError, parse_page_spec
+from .render import DEFAULT_SIZE_FIDELITY
 from .translate import Translator
 
 app = typer.Typer(add_completion=False, help="Layout-preserving PDF translator.")
@@ -59,6 +60,17 @@ def main(
              "overwrite their entries. Other pages' entries are left alone; "
              "delete the cache directory for a full reset.",
     ),
+    size_fidelity: float = typer.Option(
+        DEFAULT_SIZE_FIDELITY, "--size-fidelity",
+        help=(
+            "How closely to hold the original font size, 0.0-1.0. Higher keeps "
+            "translated text nearer the source's size, compressing the longest "
+            "lines harder; lower keeps sizes more uniform within a paragraph by "
+            "shrinking it to suit its worst line. Values above about 0.70 have "
+            "no further effect. Raise it for target languages that run longer "
+            "than the source."
+        ),
+    ),
     request_pause: float = typer.Option(
         0.0, "--request-pause",
         help="Seconds to wait before each API call. Use to stay under a "
@@ -99,6 +111,9 @@ def main(
         typer.secho(str(exc), fg="red")
         raise typer.Exit(1)
 
+    if not 0.0 <= size_fidelity <= 1.0:
+        typer.secho("--size-fidelity must be between 0.0 and 1.0", fg="red")
+        raise typer.Exit(1)
     if max_attempts < 1:
         typer.secho("--max-attempts must be at least 1", fg="red")
         raise typer.Exit(1)
@@ -117,7 +132,11 @@ def main(
         max_tokens=max_tokens,
         max_attempts=max_attempts,
     )
-    orchestrator = Orchestrator(translator, mirror=(mode == "side-by-side"))
+    orchestrator = Orchestrator(
+        translator,
+        mirror=(mode == "side-by-side"),
+        size_fidelity=size_fidelity,
+    )
     try:
         orchestrator.run(input_file, output_file, pages)
     except PageRangeError as exc:

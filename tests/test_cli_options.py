@@ -95,3 +95,53 @@ def test_all_three_options_are_documented_in_help():
     result = runner.invoke(app, ["--help"])
     for flag in ("--request-pause", "--max-tokens", "--max-attempts"):
         assert flag in result.output, flag
+
+
+# ------------------------------------------------------------ size fidelity
+def test_size_fidelity_reaches_the_renderer(book, tmp_path, monkeypatch):
+    """Breaks if --size-fidelity stops being wired through to PdfRenderer."""
+    from pdftranslator import orchestrator as orch
+
+    seen: list[float] = []
+    original = orch.PdfRenderer
+
+    class Recording(original):
+        def __init__(self, fonts, size_fidelity=None, **kw):
+            seen.append(size_fidelity)
+            super().__init__(fonts, size_fidelity=size_fidelity, **kw)
+
+    monkeypatch.setattr(orch, "PdfRenderer", Recording)
+    monkeypatch.setattr(translate_mod.litellm, "completion",
+                        lambda **k: _Reply('{"0": "x", "1": "y"}'))
+    _run(book, tmp_path, "--size-fidelity", "0.30")
+    assert seen == [pytest.approx(0.30)], seen
+
+
+def test_size_fidelity_defaults_to_the_chosen_value(book, tmp_path, monkeypatch):
+    from pdftranslator import orchestrator as orch
+
+    seen: list[float] = []
+    original = orch.PdfRenderer
+
+    class Recording(original):
+        def __init__(self, fonts, size_fidelity=None, **kw):
+            seen.append(size_fidelity)
+            super().__init__(fonts, size_fidelity=size_fidelity, **kw)
+
+    monkeypatch.setattr(orch, "PdfRenderer", Recording)
+    monkeypatch.setattr(translate_mod.litellm, "completion",
+                        lambda **k: _Reply('{"0": "x", "1": "y"}'))
+    _run(book, tmp_path)
+    assert seen == [pytest.approx(0.55)], seen
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1.5"])
+def test_size_fidelity_out_of_range_is_rejected(book, tmp_path, provider, value):
+    result = _run(book, tmp_path, "--size-fidelity", value)
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+
+
+def test_size_fidelity_is_documented_in_help():
+    result = runner.invoke(app, ["--help"])
+    assert "--size-fidelity" in result.output

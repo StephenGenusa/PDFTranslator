@@ -31,10 +31,23 @@ from .models import BBox, Line, PageContent
 logger = logging.getLogger(__name__)
 
 MIN_FONT_SIZE = 4.0
-# Quantile of per-line fit factors used as the page-wide shrink factor. 0.0
-# would be the worst line on the page, letting one runaway translation shrink
-# everything; 0.10 lets the few worst lines shrink on their own instead.
-_SCALE_QUANTILE = 0.10
+
+# How closely to hold a block to its source font size. It is the quantile of the
+# block's per-line width requirements that the chosen size must satisfy using
+# gentle condensing alone; the rest are condensed harder or, failing that,
+# shrunk. Higher keeps text nearer the original size at the cost of compressing
+# the longest lines more. Above roughly 0.70 the size is already pinned at the
+# original and the value stops having any effect.
+DEFAULT_SIZE_FIDELITY = 0.55
+
+# Condensing scales width only -- cap height is untouched -- so a condensed line
+# still reads as the same size as its neighbours. Invisible down to _CONDENSE_SOFT,
+# acceptable to _CONDENSE_HARD; past that the font has to give.
+_CONDENSE_SOFT = 0.92
+_CONDENSE_HARD = 0.80
+_MARGIN_BORROW = 12.0  # points of outer margin a line may run into
+_SIZE_FLOOR = 0.75     # a block never shrinks below this fraction of source size
+_LINE_FLOOR = 0.60     # a single overlong line may go this far
 _MASK_PAD_X = 1.5  # points; cover OCR boxes that sit just inside the inked glyphs
 _MASK_PAD_Y = 1.5
 _CONTRAST_MIN = 0.40  # min luminance gap to keep the original text colour
@@ -42,8 +55,11 @@ _SAMPLE_ZOOM = 2.0  # render scale for background sampling
 
 
 class PdfRenderer:
-    def __init__(self, fonts: FontBook) -> None:
+    def __init__(
+        self, fonts: FontBook, size_fidelity: float = DEFAULT_SIZE_FIDELITY
+    ) -> None:
         self._fonts = fonts
+        self.size_fidelity = size_fidelity
 
     def render_page(
         self,
@@ -71,115 +87,127 @@ class PdfRenderer:
             return
 
         sampler = _BackgroundSampler(source_page)
-        scale = self._page_scale(content)
 
         # Resolve every line first, then draw all masks, then all text — so a
         # lower line's mask can never clip the line drawn above it.
         ops = [
             op
-            for line in content.lines
-            if (op := self._plan_line(line, content, scale, sampler, offset_x)) is not None
+            for block in self._blocks(content)
+            for op in self._plan_block(block, content, sampler, offset_x)
         ]
         for op in ops:
             page.draw_rect(op.mask, color=op.bg, fill=op.bg, width=0)
         for op in ops:
             self._draw(page, op)
 
-    # ------------------------------------------------------------- page scale
-    def _page_scale(self, content: PageContent) -> float:
-        """One shrink factor for the whole page.
+    # ----------------------------------------------------------- block sizing
+    @staticmethod
+    def _blocks(content: PageContent) -> list[list[Line]]:
+        grouped: dict[int, list[Line]] = {}
+        for line in content.lines:
+            grouped.setdefault(line.block_index, []).append(line)
+        return [grouped[key] for key in sorted(grouped)]
 
-        A single factor is what keeps the page faithful: scaling every line by
-        the same amount preserves the size *relationships* the source had, so a
-        heading stays proportionally larger than its body text and lines that
-        looked alike still look alike.
+    def _block_extent(self, block: list[Line], content: PageContent) -> tuple[float, float, float]:
+        """(left, right, limit) for a block -- limit includes borrowed margin."""
+        left = min(line.left_x for line in block)
+        right = max(line.right_x for line in block)
+        room = min(_MARGIN_BORROW, max(0.0, content.width - right))
+        return left, right, right + room
 
-        This used to be one factor per block, averaged over the block's lines,
-        with each line then taking ``min(block_factor, its_own_fit)``. Two things
-        went wrong. The per-line minimum meant neighbouring body lines still got
-        different sizes (measured: 49% of adjacent same-size lines differed).
-        And the grouping came from PyMuPDF's block numbering, a parser detail --
-        1.28 splits the same text into 2.2x more blocks than 1.27, which moved
-        the rendering with it.
+    def _width_needs(self, block: list[Line], content: PageContent) -> list[float]:
+        """Per line: the fraction of its natural width that has to fit."""
+        left, _right, limit = self._block_extent(block, content)
+        needs = []
+        for line in block:
+            text = self._text_of(line)
+            natural = self._fonts.measure(text, line.size, line.serif)
+            available = (limit - line.left_x) if line.align == "left" else (limit - left)
+            needs.append(min(1.0, available / natural) if natural > 0 else 1.0)
+        return needs
 
-        The factor is the ``_SCALE_QUANTILE`` quantile of the per-line fits
-        rather than the minimum, so one runaway translation shrinks itself (see
-        ``_plan_line``) instead of shrinking the entire page around it.
-        """
-        fits = sorted(self._fit_scale(line, content) for line in content.lines)
-        if not fits:
+    def _block_scale(self, block: list[Line], content: PageContent) -> float:
+        """One font scale for the block, from the size-fidelity quantile."""
+        needs = self._width_needs(block, content)
+        if not needs:
             return 1.0
-        index = max(0, min(len(fits) - 1, int(_SCALE_QUANTILE * len(fits))))
-        return min(1.0, fits[index])
-
-    def _fit_scale(self, line: Line, content: PageContent) -> float:
-        text = line.translated if line.translated is not None else line.text
-        if not text.strip():
-            return 1.0
-        avail = self._available_width(line, content)
-        width = self._fonts.measure(text, line.size, line.serif)
-        return min(1.0, avail / width) if width > 0 else 1.0
+        ordered = sorted(needs)
+        index = max(0, min(len(ordered) - 1, int(self.size_fidelity * len(ordered))))
+        return max(_SIZE_FLOOR, min(1.0, ordered[index] / _CONDENSE_SOFT))
 
     @staticmethod
-    def _available_width(line: Line, content: PageContent) -> float:
-        if line.align == "left":
-            avail = content.text_right - line.left_x
-        else:
-            avail = content.text_right - content.text_left
-        return max(avail, 10.0)
+    def _text_of(line: Line) -> str:
+        return line.translated if line.translated is not None else line.text
 
     # ------------------------------------------------------------------ lines
-    def _plan_line(
+    def _plan_block(
         self,
-        line: Line,
+        block: list[Line],
         content: PageContent,
-        page_scale: float,
         sampler: "_BackgroundSampler",
         offset_x: float,
-    ) -> "_LineOp | None":
-        text = line.translated if line.translated is not None else line.text
-        if not text.strip():
-            return None
+    ) -> list["_LineOp"]:
+        left, right, _limit = self._block_extent(block, content)
+        scale = self._block_scale(block, content)
+        needs = self._width_needs(block, content)
+        ops: list[_LineOp] = []
 
-        # The page factor unless this line still would not fit at it, in which
-        # case the line shrinks alone rather than dragging the page down.
-        scale = min(page_scale, self._fit_scale(line, content))
-        fontsize = max(MIN_FONT_SIZE, line.size * scale)
-        width = self._fonts.measure(text, fontsize, line.serif)
+        for line, need in zip(block, needs):
+            text = self._text_of(line)
+            if not text.strip():
+                continue
 
-        # Mask over the original text (source coords, shifted to the output half).
-        bg = sampler.sample(line.bbox)
-        mask = pymupdf.Rect(
-            line.bbox[0] - _MASK_PAD_X + offset_x,
-            line.bbox[1] - _MASK_PAD_Y,
-            line.bbox[2] + _MASK_PAD_X + offset_x,
-            line.bbox[3] + _MASK_PAD_Y,
-        )
+            line_scale = scale
+            condense = min(1.0, need / line_scale) if line_scale > 0 else 1.0
+            if condense < _CONDENSE_HARD:
+                # Condensing alone cannot absorb it; this one line gives up size.
+                condense = _CONDENSE_HARD
+                line_scale = max(_LINE_FLOOR, need / _CONDENSE_HARD)
 
-        # Horizontal placement preserves the original alignment.
-        if line.align == "right":
-            start_x = line.right_x + offset_x - width
-        elif line.align == "center":
-            mid = (content.text_left + content.text_right) / 2.0 + offset_x
-            start_x = mid - width / 2.0
-        else:
-            start_x = line.left_x + offset_x
-        # Keep the line inside its own half of the output page. Clamping against
-        # the whole sheet let a line too long to shrink into the column slide
-        # past x=0 and get drawn across the pristine original half.
-        half_left, half_right = offset_x, offset_x + content.width
-        start_x = min(start_x, half_right - width - 1.0)
-        start_x = max(start_x, half_left + 1.0)
+            fontsize = max(MIN_FONT_SIZE, line.size * line_scale)
+            width = self._fonts.measure(text, fontsize, line.serif) * condense
 
-        return _LineOp(
-            text=text,
-            point=pymupdf.Point(start_x, line.baseline_y),
-            fontsize=fontsize,
-            serif=line.serif,
-            color=self._text_color(bg, line.color),
-            mask=mask,
-            bg=bg,
-        )
+            bg = sampler.sample(line.bbox)
+            mask = pymupdf.Rect(
+                line.bbox[0] - _MASK_PAD_X + offset_x,
+                line.bbox[1] - _MASK_PAD_Y,
+                line.bbox[2] + _MASK_PAD_X + offset_x,
+                line.bbox[3] + _MASK_PAD_Y,
+            )
+
+            if line.align == "right":
+                start_x = right + offset_x - width
+            elif line.align == "center":
+                start_x = (left + right) / 2.0 + offset_x - width / 2.0
+            else:
+                start_x = line.left_x + offset_x
+
+            # Never start before this half of the sheet -- that is what used to
+            # draw a translation across the pristine original. The start is not
+            # pulled leftward to make a line fit: a line keeps its source line's
+            # x, so it stays aligned with the rest of its block.
+            start_x = max(start_x, offset_x + 1.0)
+
+            # Staying on the page outranks the readability floor: an extreme
+            # line shrinks past it rather than running off the sheet.
+            page_right = offset_x + content.width
+            if start_x + width > page_right - 1.0:
+                room = max(1.0, page_right - 1.0 - start_x)
+                shrink = room / width
+                fontsize = max(MIN_FONT_SIZE, fontsize * shrink)
+                width = self._fonts.measure(text, fontsize, line.serif) * condense
+
+            ops.append(_LineOp(
+                text=text,
+                point=pymupdf.Point(start_x, line.baseline_y),
+                fontsize=fontsize,
+                serif=line.serif,
+                color=self._text_color(bg, line.color),
+                mask=mask,
+                bg=bg,
+                condense=condense,
+            ))
+        return ops
 
     def _draw(self, page: pymupdf.Page, op: "_LineOp") -> None:
         try:
@@ -189,6 +217,9 @@ class PdfRenderer:
                 fontname=self._fonts.name_for(op.serif),
                 fontsize=op.fontsize,
                 color=op.color,
+                # Width-only transform: the glyphs narrow, their height does not.
+                morph=(op.point, pymupdf.Matrix(op.condense, 1.0))
+                if op.condense < 0.999 else None,
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("insert_text failed (%s)", exc)
@@ -206,9 +237,11 @@ class PdfRenderer:
 class _LineOp:
     """A resolved draw operation: where to mask and what text to stamp."""
 
-    __slots__ = ("text", "point", "fontsize", "serif", "color", "mask", "bg")
+    __slots__ = ("text", "point", "fontsize", "serif", "color", "mask", "bg",
+                 "condense")
 
-    def __init__(self, *, text, point, fontsize, serif, color, mask, bg) -> None:
+    def __init__(self, *, text, point, fontsize, serif, color, mask, bg,
+                 condense=1.0) -> None:
         self.text = text
         self.point = point
         self.fontsize = fontsize
@@ -216,6 +249,7 @@ class _LineOp:
         self.color = color
         self.mask = mask
         self.bg = bg
+        self.condense = condense
 
 
 class _BackgroundSampler:

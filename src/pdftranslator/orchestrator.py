@@ -9,7 +9,7 @@ import pymupdf
 from tqdm import tqdm
 
 from .fonts import FontBook
-from .render import PdfRenderer
+from .render import DEFAULT_SIZE_FIDELITY, PdfRenderer
 from .scanner import DocumentScanner
 from .translate import Translator
 
@@ -89,9 +89,15 @@ def resolve_page_spec(spec: str, max_pages: int) -> list[int]:
 
 
 class Orchestrator:
-    def __init__(self, translator: Translator, *, mirror: bool) -> None:
+    def __init__(
+        self,
+        translator: Translator,
+        *,
+        mirror: bool,
+        size_fidelity: float = DEFAULT_SIZE_FIDELITY,
+    ) -> None:
         self._scanner = DocumentScanner()
-        self._renderer = PdfRenderer(FontBook())
+        self._renderer = PdfRenderer(FontBook(), size_fidelity=size_fidelity)
         self._translator = translator
         self._mirror = mirror
 

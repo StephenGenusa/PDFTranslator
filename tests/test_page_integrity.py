@@ -44,7 +44,7 @@ def test_a_render_failure_does_not_add_an_extra_page(tmp_path, monkeypatch):
     def boom(self, *a, **kw):
         raise RuntimeError("render exploded")
 
-    monkeypatch.setattr(render_mod.PdfRenderer, "_plan_line", boom)
+    monkeypatch.setattr(render_mod.PdfRenderer, "_plan_block", boom)
 
     out = _run(tmp_path, pages=3)
     with pymupdf.open(out) as doc:
@@ -55,7 +55,7 @@ def test_the_recovered_page_shows_the_original_content(tmp_path, monkeypatch):
     def boom(self, *a, **kw):
         raise RuntimeError("render exploded")
 
-    monkeypatch.setattr(render_mod.PdfRenderer, "_plan_line", boom)
+    monkeypatch.setattr(render_mod.PdfRenderer, "_plan_block", boom)
 
     out = _run(tmp_path, pages=3)
     with pymupdf.open(out) as doc:
@@ -67,7 +67,7 @@ def test_a_render_failure_keeps_page_size_in_side_by_side_mode(tmp_path, monkeyp
     def boom(self, *a, **kw):
         raise RuntimeError("render exploded")
 
-    monkeypatch.setattr(render_mod.PdfRenderer, "_plan_line", boom)
+    monkeypatch.setattr(render_mod.PdfRenderer, "_plan_block", boom)
 
     out = _run(tmp_path, mirror=True, pages=2)
     with pymupdf.open(out) as doc:

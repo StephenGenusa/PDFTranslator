@@ -28,8 +28,13 @@ Metrics, all rooted in fidelity to the source document rather than taste:
                     structure of the original page. Lower is better.
 
   size jumps        Vertically adjacent lines that share a source size but are
-                    rendered at different sizes. _block_scales exists to avoid
-                    exactly this. Lower is better.
+                    rendered at different font sizes. Condensing is deliberately
+                    NOT counted here: it narrows a line without changing its cap
+                    height, so a condensed line still reads as its neighbours'
+                    size. Lower is better.
+
+  condensing        How far lines are narrowed to fit. Reported separately from
+                    size because it costs width, not height.
 """
 
 from __future__ import annotations
@@ -46,7 +51,11 @@ sys.path.insert(0, str(REPO / "src"))
 import pymupdf  # noqa: E402
 
 from pdftranslator.fonts import FontBook  # noqa: E402
-from pdftranslator.render import MIN_FONT_SIZE, PdfRenderer  # noqa: E402
+from pdftranslator.render import PdfRenderer, _BackgroundSampler  # noqa: E402
+
+
+def render_sampler(page):
+    return _BackgroundSampler(page)
 from pdftranslator.scanner import DocumentScanner  # noqa: E402
 from pdftranslator.translate import Translator  # noqa: E402
 
@@ -73,6 +82,7 @@ def measure(pages: str = "2-25") -> dict:
     fonts = renderer._fonts
 
     over_shrink: list[float] = []
+    condensing: list[float] = []
     overflow_pts: list[float] = []
     jumps: list[float] = []
     blocks_per_page: list[int] = []
@@ -90,26 +100,28 @@ def measure(pages: str = "2-25") -> dict:
                 ):
                     line.translated = tr
 
-                page_scale = renderer._page_scale(content)
                 blocks_per_page.append(
                     len({ln.block_index for ln in content.lines})
                 )
 
                 rendered = []
-                for line in content.lines:
-                    own_fit = renderer._fit_scale(line, content)
-                    scale = min(page_scale, own_fit)
-                    size = max(MIN_FONT_SIZE, line.size * scale)
-                    over_shrink.append(max(0.0, own_fit - scale))
-                    lines_total += 1
+                sampler = render_sampler(doc[idx])
+                for block in renderer._blocks(content):
+                    scale = renderer._block_scale(block, content)
+                    for line, op in zip(
+                        block, renderer._plan_block(block, content, sampler, 0.0)
+                    ):
+                        own_fit = min(1.0, op.fontsize / line.size) if line.size else 1.0
+                        over_shrink.append(max(0.0, scale - op.fontsize / line.size))
+                        condensing.append(op.condense)
+                        lines_total += 1
 
-                    avail = renderer._available_width(line, content)
-                    width = fonts.measure(line.translated or line.text, size,
-                                          line.serif)
-                    if width > avail + 1.0:
-                        overflow_pts.append(width - avail)
+                        avail = renderer._block_extent(block, content)[2] - line.left_x
+                        width = fonts.measure(op.text, op.fontsize, line.serif) * op.condense
+                        if width > avail + 1.0:
+                            overflow_pts.append(width - avail)
 
-                    rendered.append((line.baseline_y, line.size, size))
+                        rendered.append((line.baseline_y, line.size, op.fontsize))
 
                 rendered.sort()
                 for (y1, src1, out1), (y2, src2, out2) in zip(rendered, rendered[1:]):
@@ -130,6 +142,10 @@ def measure(pages: str = "2-25") -> dict:
         "lines": lines_total,
         "blocks_per_page": round(statistics.mean(blocks_per_page), 3),
         "over_shrink_mean": round(statistics.mean(over_shrink), 5),
+        "condense_mean": round(statistics.mean(condensing), 4),
+        "condense_below_92_pct": round(
+            100 * sum(1 for c in condensing if c < 0.92) / max(lines_total, 1), 2
+        ),
         "over_shrink_lines_pct": round(
             100 * sum(1 for v in over_shrink if v > 0.001) / max(lines_total, 1), 2
         ),
