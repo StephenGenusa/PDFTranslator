@@ -178,17 +178,30 @@ class Orchestrator:
         """
         counts: Counter[str] = Counter()
         already = 0
+        suspect: list[int] = []
         for index in indices:
             content = self._scanner.extract(doc[index], index)
             counts.update({line.text for line in content.lines})
-            if content.lines and self._translator.has_cached(
-                [line.text for line in content.lines]
-            ):
+            if not content.lines:
+                continue
+            texts = [line.text for line in content.lines]
+            if self._translator.has_cached(texts):
                 already += 1
+                if self._translator.cached_looks_misaligned(texts):
+                    suspect.append(index + 1)
         logger.info(
             "Cache: %d of %d page(s) already translated; %d to translate",
             already, len(indices), len(indices) - already,
         )
+        if suspect:
+            logger.warning(
+                "%d cached page(s) look misaligned (a translation reused, or "
+                "badly the wrong length for its line): %s. Re-run those pages "
+                "with --ignore-cache to replace them.",
+                len(suspect),
+                ",".join(str(p) for p in suspect[:20])
+                + ("..." if len(suspect) > 20 else ""),
+            )
         recurring = {
             text for text, seen in counts.items()
             if seen >= RECURRING_PAGE_THRESHOLD
@@ -244,10 +257,11 @@ class Orchestrator:
         s = self._translator.stats
         logger.info(
             "Translation stats: pages=%d api_calls=%d cache_hits=%d "
-            "fallbacks=%d api_errors=%d truncated=%d cache_migrated=%d "
+            "fallbacks=%d api_errors=%d truncated=%d misaligned=%d cache_migrated=%d "
             "cache_pruned=%d",
             s["pages"], s["api_calls"], s["cache_hits"], s["fallbacks"],
             s.get("api_errors", 0), s.get("truncated", 0),
+            s.get("misaligned", 0),
             s.get("cache_migrated", 0), s.get("cache_pruned", 0),
         )
         logger.info(

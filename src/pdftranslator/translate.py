@@ -89,6 +89,7 @@ class Translator:
             "completion_tokens": 0,
             "cost_usd": 0.0,
             "truncated": 0,
+            "misaligned": 0,
         }
 
     # ------------------------------------------------------------------- API
@@ -238,6 +239,17 @@ class Translator:
             if obj:
                 current = [_batch_value(obj.get(str(i))) for i in range(np_)]
                 # Keep the most complete response across attempts.
+                if _misaligned(lines, current[:n]):
+                    self.stats["misaligned"] += 1
+                    logger.warning(
+                        "Batch looks misaligned (a translation reused, or badly "
+                        "the wrong length for its line); retrying."
+                    )
+                    if attempt < self.max_attempts - 1:
+                        time.sleep(_RETRY_BACKOFF * (attempt + 1))
+                        continue
+                    # Out of attempts: per-line translation cannot misalign.
+                    return [None] * n, False
                 if sum(x is not None for x in current) > sum(x is not None for x in best):
                     best = current
                 if all(x is not None for x in best[:n]):
@@ -390,6 +402,18 @@ class Translator:
                 return True
         return False
 
+    def cached_looks_misaligned(self, lines: list[str]) -> bool:
+        """Does the stored translation for this page look shifted?
+
+        Read-only. Entries written before misalignment detection existed still
+        carry the damage, and serving them silently hides it.
+        """
+        for key in (self._page_key(lines), self._legacy_page_key(lines)):
+            value = self._cache.get(key)
+            if isinstance(value, list) and len(value) == len(lines):
+                return _misaligned(lines, [str(v) for v in value])
+        return False
+
     def _lookup(self, lines: list[str], cache_key: str) -> list | None:
         """Read the cache, converting an entry written under the legacy key.
 
@@ -440,6 +464,48 @@ _WHITESPACE_RE = re.compile(r"\s+")
 def _normalise(text: str) -> str:
     """Collapse whitespace runs so extraction quirks do not change identity."""
     return _WHITESPACE_RE.sub(" ", text).strip()
+
+
+# A batch is judged misaligned when a translation is reused for two different
+# source lines, or a line's translation is wildly the wrong length for it. Only
+# lines with enough text are length-checked: numbers and markers legitimately
+# change length a great deal.
+_ALIGN_MIN_CHARS = 12
+_ALIGN_MIN_RATIO = 0.25
+_ALIGN_MAX_RATIO = 4.0
+_ALIGN_MIN_ODD_LINES = 2
+_ALIGN_ODD_SHARE = 0.10
+
+
+def _misaligned(lines: list[str], values: list[str | None]) -> bool:
+    """Do the values look like they landed under the wrong keys?
+
+    The keyed scheme realigns by key, but the model can still fill the wrong
+    key. Counts match in that case, so nothing else catches it.
+    """
+    seen: dict[str, str] = {}
+    for source, value in zip(lines, values):
+        if value is None or len(value.strip()) <= _ALIGN_MIN_CHARS:
+            continue
+        # the same translation for two *different* source lines
+        previous = seen.setdefault(value.strip(), source)
+        if previous != source:
+            return True
+    # A single odd line is plausible -- a name, a number, an aside. A shifted
+    # batch throws several lines out at once, so require more than one before
+    # condemning the page and paying for a retry.
+    checked = odd = 0
+    for source, value in zip(lines, values):
+        if value is None:
+            continue
+        length = len(source.strip())
+        if length < _ALIGN_MIN_CHARS:
+            continue
+        checked += 1
+        ratio = len(value.strip()) / length
+        if not _ALIGN_MIN_RATIO <= ratio <= _ALIGN_MAX_RATIO:
+            odd += 1
+    return odd >= _ALIGN_MIN_ODD_LINES and odd >= checked * _ALIGN_ODD_SHARE
 
 
 # Seconds between transport retries; multiplied by the attempt number.
