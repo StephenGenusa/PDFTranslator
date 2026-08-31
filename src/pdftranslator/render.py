@@ -121,7 +121,8 @@ class PdfRenderer:
         needs = []
         for line in block:
             text = self._text_of(line)
-            natural = self._fonts.measure(text, line.size, line.serif)
+            natural = self._fonts.measure(text, line.size, line.serif,
+                                          line.bold, line.italic)
             available = (limit - line.left_x) if line.align == "left" else (limit - left)
             needs.append(min(1.0, available / natural) if natural > 0 else 1.0)
         return needs
@@ -165,7 +166,8 @@ class PdfRenderer:
                 line_scale = max(_LINE_FLOOR, need / _CONDENSE_HARD)
 
             fontsize = max(MIN_FONT_SIZE, line.size * line_scale)
-            width = self._fonts.measure(text, fontsize, line.serif) * condense
+            width = self._fonts.measure(text, fontsize, line.serif,
+                                        line.bold, line.italic) * condense
 
             bg = sampler.sample(line.bbox)
             mask = pymupdf.Rect(
@@ -195,13 +197,16 @@ class PdfRenderer:
                 room = max(1.0, page_right - 1.0 - start_x)
                 shrink = room / width
                 fontsize = max(MIN_FONT_SIZE, fontsize * shrink)
-                width = self._fonts.measure(text, fontsize, line.serif) * condense
+                width = self._fonts.measure(text, fontsize, line.serif,
+                                        line.bold, line.italic) * condense
 
             ops.append(_LineOp(
                 text=text,
                 point=pymupdf.Point(start_x, line.baseline_y),
                 fontsize=fontsize,
                 serif=line.serif,
+                bold=line.bold,
+                italic=line.italic,
                 color=self._text_color(bg, line.color),
                 mask=mask,
                 bg=bg,
@@ -214,7 +219,7 @@ class PdfRenderer:
             page.insert_text(
                 op.point,
                 op.text,
-                fontname=self._fonts.name_for(op.serif),
+                fontname=self._fonts.name_for(op.serif, op.bold, op.italic),
                 fontsize=op.fontsize,
                 color=op.color,
                 # Width-only transform: the glyphs narrow, their height does not.
@@ -237,15 +242,17 @@ class PdfRenderer:
 class _LineOp:
     """A resolved draw operation: where to mask and what text to stamp."""
 
-    __slots__ = ("text", "point", "fontsize", "serif", "color", "mask", "bg",
-                 "condense")
+    __slots__ = ("text", "point", "fontsize", "serif", "bold", "italic",
+                 "color", "mask", "bg", "condense")
 
     def __init__(self, *, text, point, fontsize, serif, color, mask, bg,
-                 condense=1.0) -> None:
+                 condense=1.0, bold=False, italic=False) -> None:
         self.text = text
         self.point = point
         self.fontsize = fontsize
         self.serif = serif
+        self.bold = bold
+        self.italic = italic
         self.color = color
         self.mask = mask
         self.bg = bg

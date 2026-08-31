@@ -20,6 +20,7 @@ from .models import BBox, Line, PageContent, Span
 logger = logging.getLogger(__name__)
 
 # Span flag bits (PyMuPDF).
+_FLAG_ITALIC = 1 << 1
 _FLAG_SERIF = 1 << 2
 _FLAG_BOLD = 1 << 4
 
@@ -149,6 +150,7 @@ class DocumentScanner:
             size=dominant.size,
             serif=self._is_serif(dominant),
             bold=bool(dominant.flags & _FLAG_BOLD),
+            italic=self._is_italic(dominant),
             color=dominant.color,
             align="left",  # refined later once the text column is known
             block_index=block_index,
@@ -204,6 +206,7 @@ class DocumentScanner:
             size=dominant.size,
             serif=self._is_serif(dominant),
             bold=bool(dominant.flags & _FLAG_BOLD),
+            italic=self._is_italic(dominant),
             color=dominant.color,
             align="left",
             block_index=group[0].block_index,
@@ -269,6 +272,13 @@ class DocumentScanner:
             return True
         low = span.font.lower()
         return "serif" in low or "times" in low or "georgia" in low or "roman" in low
+
+    @staticmethod
+    def _is_italic(span: Span) -> bool:
+        if span.flags & _FLAG_ITALIC:
+            return True
+        low = span.font.lower()
+        return "italic" in low or "oblique" in low
 
     def _is_frozen(self, text: str, bbox: BBox, page_h: float) -> bool:
         stripped = text.strip()

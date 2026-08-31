@@ -31,7 +31,7 @@
 - ✅ **Layout preserved** — images, rules, backgrounds, page numbers and all non-text elements survive untouched
 - ✅ **Side-by-side bilingual output** — original on the left, translation on the right; ideal as a reading or language-learning aid
 - ✅ **Full substitution mode** — translation only, typeset at the original baseline and alignment
-- ✅ **Smart font matching** — bundled Noto Sans/Serif (Latin, Cyrillic, Greek); serif/sans-serif automatically matched per line
+- ✅ **Smart font matching** — bundled Noto Sans/Serif in regular, bold and italic (Latin, Cyrillic, Greek); serif/sans and weight/style matched per line
 - ✅ **Disk cache** — completed page translations are cached; interrupted runs resume from where they left off with no extra API cost
 - ✅ **Automatic repair** — lines the model echoes unchanged are detected and retried; missing lines fall back to per-line translation
 - ✅ **Page range selection** — process any subset of pages (`1-5,7,20-30`)
@@ -291,7 +291,7 @@ fitz.Page
 | Long translations shrink font size to fit | By design (no overflow/collision); one factor per page, so relative sizes are preserved |
 | Background mask is flat colour | Works well on solid pages; visible over photos/gradients |
 | Multi-column layouts and tables | Single text-column assumed; columns may merge |
-| Bold / italic not reproduced | Only Noto Regular bundled; per-span weight/style is planned |
+| Bold / italic | Reproduced per line; bold wins when a source face is bold-italic |
 | Scanned pages without a text layer | Copied as-is (no OCR) |
 | Non-Latin targets (CJK, Arabic, etc.) | Needs matching Noto font variants |
 
@@ -318,8 +318,8 @@ PDFTranslator/
 │   ├── models.py         Data models
 │   ├── fonts.py          Font management
 │   └── data/             Bundled Noto fonts (shipped inside the wheel)
-│       ├── NotoSans-Regular.ttf   Latin/Cyrillic/Greek sans-serif
-│       └── NotoSerif-Regular.ttf  Latin/Cyrillic/Greek serif
+│       ├── NotoSans-{Regular,Bold,Italic}.ttf
+│       └── NotoSerif-{Regular,Bold,Italic}.ttf
 ├── tests/
 ├── pyproject.toml
 └── README.md

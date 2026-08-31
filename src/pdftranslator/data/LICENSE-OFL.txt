@@ -1,11 +1,15 @@
-Copyright 2015-2021 Google LLC. All Rights Reserved.
+Copyright 2015-2022 Google LLC. All Rights Reserved.
 
 The following fonts are bundled with pdftranslator in this directory and are
 licensed under the SIL Open Font License, Version 1.1, reproduced in full below.
 They are redistributed unmodified.
 
-    NotoSans-Regular.ttf    Noto Sans, Version 2.006
-    NotoSerif-Regular.ttf   Noto Serif, Version 2.005
+    NotoSans-Regular.ttf       Version 2.006
+    NotoSans-Bold.ttf          Version 2.008
+    NotoSans-Italic.ttf        Version 2.008
+    NotoSerif-Regular.ttf      Version 2.005
+    NotoSerif-Bold.ttf         Version 2.007
+    NotoSerif-Italic.ttf       Version 2.007
 
 Upstream: https://github.com/notofonts/notofonts.github.io
 Licence FAQ: https://openfontlicense.org
