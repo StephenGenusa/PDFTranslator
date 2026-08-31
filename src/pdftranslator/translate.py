@@ -244,16 +244,6 @@ class Translator:
             )
         return best[:n], False
 
-    def _translate_individually(
-        self, lines: list[str], preceding_context: str | None
-    ) -> list[str]:
-        """Guaranteed-aligned fallback: one call per line, original on failure.
-
-        The full page is still supplied as context so quality stays reasonable.
-        """
-        page_context = "\n".join(lines)
-        return [self._translate_one(line, page_context, i, len(lines)) for i, line in enumerate(lines)]
-
     def _translate_one(
         self, line: str, page_context: str, idx: int, total: int
     ) -> str | None:
