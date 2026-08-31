@@ -43,7 +43,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-import fitz  # noqa: E402
+import pymupdf  # noqa: E402
 
 from pdftranslator.fonts import FontBook  # noqa: E402
 from pdftranslator.render import MIN_FONT_SIZE, PdfRenderer  # noqa: E402
@@ -79,7 +79,7 @@ def measure(pages: str = "2-25") -> dict:
     inversions = pairs = lines_total = 0
 
     try:
-        with fitz.open(BOOK) as doc:
+        with pymupdf.open(BOOK) as doc:
             for idx in _page_indices(pages, doc.page_count):
                 content = scanner.extract(doc[idx], idx)
                 if not content.lines:
@@ -126,7 +126,7 @@ def measure(pages: str = "2-25") -> dict:
         translator.close()
 
     return {
-        "pymupdf": fitz.__doc__.splitlines()[0],
+        "pymupdf": pymupdf.__doc__.splitlines()[0],
         "lines": lines_total,
         "blocks_per_page": round(statistics.mean(blocks_per_page), 3),
         "over_shrink_mean": round(statistics.mean(over_shrink), 5),

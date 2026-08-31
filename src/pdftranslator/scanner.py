@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 
-import fitz
+import pymupdf
 
 from .models import BBox, Line, PageContent, Span
 
@@ -29,18 +29,18 @@ _BASELINE_TOL = 4.0  # points; fragments within this share one visual line
 
 
 class DocumentScanner:
-    """Turns a ``fitz.Page`` into a :class:`PageContent`."""
+    """Turns a ``pymupdf.Page`` into a :class:`PageContent`."""
 
-    def is_scanned(self, page: fitz.Page) -> bool:
+    def is_scanned(self, page: pymupdf.Page) -> bool:
         return len(page.get_text().strip()) < _SCANNED_CHAR_THRESHOLD and bool(
             page.get_images()
         )
 
-    def extract(self, page: fitz.Page, page_index: int) -> PageContent:
+    def extract(self, page: pymupdf.Page, page_index: int) -> PageContent:
         width, height = page.rect.width, page.rect.height
         raw = page.get_text(
             "dict",
-            flags=fitz.TEXT_PRESERVE_LIGATURES | fitz.TEXT_PRESERVE_WHITESPACE,
+            flags=pymupdf.TEXT_PRESERVE_LIGATURES | pymupdf.TEXT_PRESERVE_WHITESPACE,
         )
 
         frozen: list[Span] = []

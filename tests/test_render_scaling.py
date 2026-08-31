@@ -15,7 +15,7 @@ the production code.
 
 from __future__ import annotations
 
-import fitz
+import pymupdf
 import pytest
 
 from pdftranslator.fonts import FontBook
@@ -52,9 +52,9 @@ def _content(specs, *, block_indices=None) -> PageContent:
 
 def _rendered_sizes(renderer, content) -> list[float]:
     """Font sizes actually drawn, in vertical order, read back from the PDF."""
-    src_doc = fitz.open()
+    src_doc = pymupdf.open()
     src = src_doc.new_page(width=PAGE_W, height=PAGE_H)
-    writer = fitz.open()
+    writer = pymupdf.open()
     renderer.render_page(writer, src, content, mirror=False)
     spans = [
         (s["bbox"][1], round(s["size"], 3))
@@ -127,9 +127,9 @@ def test_source_size_order_is_preserved(renderer):
 # -------------------------------------------------------------------------- fit
 def test_no_line_is_drawn_wider_than_its_column(renderer):
     content = _content([(11.0, BODY)] * 4 + [(11.0, LONG)])
-    src_doc = fitz.open()
+    src_doc = pymupdf.open()
     src = src_doc.new_page(width=PAGE_W, height=PAGE_H)
-    writer = fitz.open()
+    writer = pymupdf.open()
     renderer.render_page(writer, src, content, mirror=False)
     for block in writer[0].get_text("dict")["blocks"]:
         for line in block.get("lines", []):

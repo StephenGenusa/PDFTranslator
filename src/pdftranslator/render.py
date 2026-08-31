@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 
-import fitz
+import pymupdf
 
 from .fonts import FontBook
 from .models import BBox, Line, PageContent
@@ -47,8 +47,8 @@ class PdfRenderer:
 
     def render_page(
         self,
-        writer: fitz.Document,
-        source_page: fitz.Page,
+        writer: pymupdf.Document,
+        source_page: pymupdf.Page,
         content: PageContent,
         *,
         mirror: bool,
@@ -64,8 +64,8 @@ class PdfRenderer:
         # halves (left stays pristine; right gets the overlay).
         parent, pno = source_page.parent, source_page.number
         if mirror:
-            page.show_pdf_page(fitz.Rect(0, 0, w, h), parent, pno)
-        page.show_pdf_page(fitz.Rect(offset_x, 0, offset_x + w, h), parent, pno)
+            page.show_pdf_page(pymupdf.Rect(0, 0, w, h), parent, pno)
+        page.show_pdf_page(pymupdf.Rect(offset_x, 0, offset_x + w, h), parent, pno)
 
         if not content.lines:
             return
@@ -149,7 +149,7 @@ class PdfRenderer:
 
         # Mask over the original text (source coords, shifted to the output half).
         bg = sampler.sample(line.bbox)
-        mask = fitz.Rect(
+        mask = pymupdf.Rect(
             line.bbox[0] - _MASK_PAD_X + offset_x,
             line.bbox[1] - _MASK_PAD_Y,
             line.bbox[2] + _MASK_PAD_X + offset_x,
@@ -173,7 +173,7 @@ class PdfRenderer:
 
         return _LineOp(
             text=text,
-            point=fitz.Point(start_x, line.baseline_y),
+            point=pymupdf.Point(start_x, line.baseline_y),
             fontsize=fontsize,
             serif=line.serif,
             color=self._text_color(bg, line.color),
@@ -181,7 +181,7 @@ class PdfRenderer:
             bg=bg,
         )
 
-    def _draw(self, page: fitz.Page, op: "_LineOp") -> None:
+    def _draw(self, page: pymupdf.Page, op: "_LineOp") -> None:
         try:
             page.insert_text(
                 op.point,
@@ -226,9 +226,9 @@ class _BackgroundSampler:
     median, which is robust to stray ink.
     """
 
-    def __init__(self, page: fitz.Page, zoom: float = _SAMPLE_ZOOM) -> None:
+    def __init__(self, page: pymupdf.Page, zoom: float = _SAMPLE_ZOOM) -> None:
         self._zoom = zoom
-        self._pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        self._pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
 
     def sample(self, bbox: BBox) -> tuple[float, float, float]:
         x0, y0, x1, y1 = bbox

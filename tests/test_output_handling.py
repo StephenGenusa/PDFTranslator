@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-import fitz
+import pymupdf
 import pytest
 from typer.testing import CliRunner
 
@@ -16,7 +16,7 @@ runner = CliRunner()
 
 
 def _make_pdf(path, pages: int = 2) -> None:
-    with fitz.open() as doc:
+    with pymupdf.open() as doc:
         for i in range(pages):
             page = doc.new_page()
             page.insert_text((72, 144), f"Labas rytas puslapis {i + 1}", fontsize=12)
@@ -97,7 +97,7 @@ def test_output_pointing_at_a_directory_is_rejected(tmp_path):
 
 # ----------------------------------------------------------- document lifetime
 def test_source_document_is_closed_when_saving_fails(tmp_path):
-    """An unclosed fitz.Document holds an OS file descriptor.
+    """An unclosed pymupdf.Document holds an OS file descriptor.
 
     On the happy path CPython's refcounting hides this, but when save() raises,
     the propagating traceback keeps run()'s frame -- and therefore the open
@@ -138,6 +138,6 @@ def test_run_still_produces_the_expected_output(tmp_path):
     finally:
         translator.close()
 
-    with fitz.open(out) as doc:
+    with pymupdf.open(out) as doc:
         assert doc.page_count == 3
         assert "Labas rytas puslapis 1" in doc[0].get_text()

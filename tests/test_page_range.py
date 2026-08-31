@@ -80,10 +80,10 @@ def test_cli_rejects_an_out_of_document_range_without_a_traceback(tmp_path):
     This range is syntactically valid, so it is only rejected once the document
     is open -- a different code path from the syntax check above.
     """
-    import fitz
+    import pymupdf
 
     src = tmp_path / "in.pdf"
-    with fitz.open() as doc:
+    with pymupdf.open() as doc:
         for _ in range(3):
             doc.new_page()
         doc.save(src)

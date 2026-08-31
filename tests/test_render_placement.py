@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import fitz
+import pymupdf
 import pytest
 
 from pdftranslator.fonts import FontBook
@@ -20,7 +20,7 @@ def renderer() -> PdfRenderer:
 
 def _render(renderer, translated: str, *, mirror: bool):
     """Render one synthetic page and return (output_page, keep_alive)."""
-    src_doc = fitz.open()
+    src_doc = pymupdf.open()
     src = src_doc.new_page(width=PAGE_W, height=PAGE_H)
     src.insert_text((20, 100), "Trumpas", fontsize=12)
 
@@ -28,7 +28,7 @@ def _render(renderer, translated: str, *, mirror: bool):
     assert len(content.lines) == 1, content.lines
     content.lines[0].translated = translated
 
-    writer = fitz.open()
+    writer = pymupdf.open()
     renderer.render_page(writer, src, content, mirror=mirror)
     return writer[0], (src_doc, writer)
 

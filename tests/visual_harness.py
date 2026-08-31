@@ -20,7 +20,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-import fitz  # noqa: E402
+import pymupdf  # noqa: E402
 
 from pdftranslator.orchestrator import Orchestrator  # noqa: E402
 from pdftranslator.translate import Translator  # noqa: E402
@@ -53,9 +53,9 @@ def capture(outdir: Path, mode: str, pages: str) -> None:
     finally:
         translator.close()
 
-    doc = fitz.open(pdf_path)
+    doc = pymupdf.open(pdf_path)
     for i in range(doc.page_count):
-        pix = doc[i].get_pixmap(matrix=fitz.Matrix(RENDER_ZOOM, RENDER_ZOOM), alpha=False)
+        pix = doc[i].get_pixmap(matrix=pymupdf.Matrix(RENDER_ZOOM, RENDER_ZOOM), alpha=False)
         pix.save(outdir / f"page-{i + 1:03d}.png")
     print(f"captured {doc.page_count} page(s) -> {outdir}")
     doc.close()
@@ -72,8 +72,8 @@ def compare(a: Path, b: Path) -> int:
 
     changed = 0
     for name in names_a:
-        pa = fitz.Pixmap(str(a / name))
-        pb = fitz.Pixmap(str(b / name))
+        pa = pymupdf.Pixmap(str(a / name))
+        pb = pymupdf.Pixmap(str(b / name))
         if (pa.width, pa.height) != (pb.width, pb.height):
             print(f"{name}: SIZE {pa.width}x{pa.height} -> {pb.width}x{pb.height}")
             changed += 1

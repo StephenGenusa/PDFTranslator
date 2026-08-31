@@ -23,7 +23,7 @@ class Span:
     size: float
     color: int  # packed sRGB integer
     # PyMuPDF font flags, a bitmask. Bit index (and value), matching the
-    # fitz.TEXT_FONT_* constants:
+    # pymupdf.TEXT_FONT_* constants:
     #   0 (1) superscript, 1 (2) italic, 2 (4) serif, 3 (8) monospaced, 4 (16) bold
     # scanner.py tests these as `1 << index`, e.g. serif is `1 << 2` == 4.
     flags: int

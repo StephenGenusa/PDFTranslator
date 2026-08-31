@@ -10,7 +10,7 @@ Each test drives the real CLI and observes the effect at the transport boundary.
 
 from __future__ import annotations
 
-import fitz
+import pymupdf
 import pytest
 from typer.testing import CliRunner
 
@@ -29,7 +29,7 @@ class _Reply:
 @pytest.fixture
 def book(tmp_path):
     path = tmp_path / "in.pdf"
-    with fitz.open() as doc:
+    with pymupdf.open() as doc:
         page = doc.new_page()
         page.insert_text((72, 144), "Labas rytas visiems", fontsize=12)
         doc.save(path)

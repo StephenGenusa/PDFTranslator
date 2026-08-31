@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import fitz
+import pymupdf
 import pytest
 
 from pdftranslator import render as render_mod
@@ -16,7 +16,7 @@ class EchoTranslator(Translator):
 
 
 def _make_pdf(path, pages: int = 3) -> None:
-    with fitz.open() as doc:
+    with pymupdf.open() as doc:
         for i in range(pages):
             page = doc.new_page()
             page.insert_text((72, 144), f"Labas rytas puslapis {i + 1}", fontsize=12)
@@ -47,7 +47,7 @@ def test_a_render_failure_does_not_add_an_extra_page(tmp_path, monkeypatch):
     monkeypatch.setattr(render_mod.PdfRenderer, "_plan_line", boom)
 
     out = _run(tmp_path, pages=3)
-    with fitz.open(out) as doc:
+    with pymupdf.open(out) as doc:
         assert doc.page_count == 3
 
 
@@ -58,7 +58,7 @@ def test_the_recovered_page_shows_the_original_content(tmp_path, monkeypatch):
     monkeypatch.setattr(render_mod.PdfRenderer, "_plan_line", boom)
 
     out = _run(tmp_path, pages=3)
-    with fitz.open(out) as doc:
+    with pymupdf.open(out) as doc:
         for i in range(3):
             assert f"Labas rytas puslapis {i + 1}" in doc[i].get_text()
 
@@ -70,12 +70,12 @@ def test_a_render_failure_keeps_page_size_in_side_by_side_mode(tmp_path, monkeyp
     monkeypatch.setattr(render_mod.PdfRenderer, "_plan_line", boom)
 
     out = _run(tmp_path, mirror=True, pages=2)
-    with fitz.open(out) as doc:
+    with pymupdf.open(out) as doc:
         assert doc.page_count == 2
         assert doc[0].rect.width == pytest.approx(595.0 * 2, abs=1.0)
 
 
 def test_a_healthy_run_has_one_output_page_per_source_page(tmp_path):
     out = _run(tmp_path, pages=3)
-    with fitz.open(out) as doc:
+    with pymupdf.open(out) as doc:
         assert doc.page_count == 3

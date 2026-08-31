@@ -7,7 +7,7 @@ sentinel-repair warning tells users to do.
 
 from __future__ import annotations
 
-import fitz
+import pymupdf
 import pytest
 from typer.testing import CliRunner
 
@@ -28,7 +28,7 @@ class _Reply:
 @pytest.fixture
 def book(tmp_path):
     path = tmp_path / "in.pdf"
-    with fitz.open() as doc:
+    with pymupdf.open() as doc:
         for i in range(3):
             page = doc.new_page()
             page.insert_text((72, 144), f"Labas rytas puslapis {i + 1}", fontsize=12)
@@ -53,7 +53,7 @@ def _seed(book, cache, page_index, value):
     """Put a known entry in the cache for one page of the book."""
     t = Translator(model="openrouter/google/gemini-2.5-flash-lite",
                    target_lang="English", cache_dir=str(cache))
-    with fitz.open(book) as doc:
+    with pymupdf.open(book) as doc:
         content = DocumentScanner().extract(doc[page_index], page_index)
         key = t._page_key([ln.text for ln in content.lines])
     t._cache.set(key, value)

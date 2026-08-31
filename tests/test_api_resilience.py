@@ -6,7 +6,7 @@ not exceptional. It must cost a retry, never a page.
 
 from __future__ import annotations
 
-import fitz
+import pymupdf
 import pytest
 
 from pdftranslator.orchestrator import Orchestrator
@@ -50,7 +50,7 @@ class ExplodingTranslator(Translator):
 
 
 def _make_pdf(path, pages: int = 2) -> None:
-    with fitz.open() as doc:
+    with pymupdf.open() as doc:
         for i in range(pages):
             page = doc.new_page()
             page.insert_text((72, 144), f"Labas rytas puslapis {i + 1}", fontsize=12)
@@ -74,7 +74,7 @@ def test_a_failed_page_keeps_the_original_content_instead_of_going_blank(tmp_pat
     finally:
         t.close()
 
-    with fitz.open(out) as doc:
+    with pymupdf.open(out) as doc:
         assert doc.page_count == 2
         for i in range(2):
             text = doc[i].get_text().strip()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import fitz
+import pymupdf
 from tqdm import tqdm
 
 from .fonts import FontBook
@@ -96,13 +96,13 @@ class Orchestrator:
         self._mirror = mirror
 
     def run(self, input_path: Path, output_path: Path, page_range: str = "all") -> bool:
-        with fitz.open(input_path) as doc, fitz.open() as writer:
+        with pymupdf.open(input_path) as doc, pymupdf.open() as writer:
             return self._run(doc, writer, input_path, output_path, page_range)
 
     def _run(
         self,
-        doc: fitz.Document,
-        writer: fitz.Document,
+        doc: pymupdf.Document,
+        writer: pymupdf.Document,
         input_path: Path,
         output_path: Path,
         page_range: str,
@@ -147,11 +147,11 @@ class Orchestrator:
         return True
 
     @staticmethod
-    def _discard_pages_after(writer: fitz.Document, count: int) -> None:
+    def _discard_pages_after(writer: pymupdf.Document, count: int) -> None:
         while writer.page_count > count:
             writer.delete_page(writer.page_count - 1)
 
-    def _untranslated_page(self, writer: fitz.Document, source_page: fitz.Page) -> None:
+    def _untranslated_page(self, writer: pymupdf.Document, source_page: pymupdf.Page) -> None:
         """Emit the original page when translation or rendering failed.
 
         This used to emit an empty page, so one transient provider error
@@ -161,10 +161,10 @@ class Orchestrator:
         page = writer.new_page(width=w * 2 if self._mirror else w, height=h)
         parent, pno = source_page.parent, source_page.number
         if self._mirror:
-            page.show_pdf_page(fitz.Rect(0, 0, w, h), parent, pno)
-            page.show_pdf_page(fitz.Rect(w, 0, w * 2, h), parent, pno)
+            page.show_pdf_page(pymupdf.Rect(0, 0, w, h), parent, pno)
+            page.show_pdf_page(pymupdf.Rect(w, 0, w * 2, h), parent, pno)
         else:
-            page.show_pdf_page(fitz.Rect(0, 0, w, h), parent, pno)
+            page.show_pdf_page(pymupdf.Rect(0, 0, w, h), parent, pno)
 
     def _log_stats(self) -> None:
         s = self._translator.stats
