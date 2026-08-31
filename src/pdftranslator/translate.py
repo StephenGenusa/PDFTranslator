@@ -83,6 +83,8 @@ class Translator:
             "cache_hits": 0,
             "fallbacks": 0,
             "api_errors": 0,
+            "cache_migrated": 0,
+            "cache_pruned": 0,
         }
 
     # ------------------------------------------------------------------- API
@@ -339,14 +341,52 @@ class Translator:
             f"v{_CACHE_VERSION}|{self.litellm_model}|{self.target_lang}|{raw}".encode("utf-8")
         ).hexdigest()
 
+    def has_cached(self, lines: list[str]) -> bool:
+        """Is a usable translation already stored for this page?
+
+        Consults both key schemes and mutates nothing, so coverage can be
+        reported without rewriting the cache. Checking only the current scheme
+        is what once made 311 already-translated pages look missing.
+        """
+        for key in (self._page_key(lines), self._legacy_page_key(lines)):
+            value = self._cache.get(key)
+            if isinstance(value, list) and len(value) == len(lines):
+                return True
+        return False
+
     def _lookup(self, lines: list[str], cache_key: str) -> list | None:
-        """Read the cache, migrating an entry written under the legacy key."""
+        """Read the cache, converting an entry written under the legacy key.
+
+        A cached translation is paid-for work, so the old key is removed only
+        after the new one has been written and read back. An entry that cannot
+        be re-keyed is never touched -- it may belong to another document.
+        """
+        legacy_key = self._legacy_page_key(lines)
         cached = self._cache.get(cache_key)
         if cached is not None:
+            # An earlier migration may have written the new key without removing
+            # the old one. Drop the duplicate only because the current key
+            # already holds this very translation; if the two disagree, that is
+            # unexplained, so keep both rather than discard work.
+            if legacy_key != cache_key and self._cache.get(legacy_key) == cached:
+                self._cache.delete(legacy_key)
+                self.stats["cache_pruned"] += 1
             return cached
-        legacy = self._cache.get(self._legacy_page_key(lines))
-        if legacy is not None:
-            self._cache.set(cache_key, legacy)  # pay the legacy lookup once
+
+        legacy = self._cache.get(legacy_key)
+        if legacy is None:
+            return None
+
+        self._cache.set(cache_key, legacy)
+        if self._cache.get(cache_key) == legacy:
+            # Only now is the duplicate safe to drop.
+            self._cache.delete(legacy_key)
+            self.stats["cache_migrated"] += 1
+        else:
+            logger.warning(
+                "Could not rewrite a cached page under the current key; "
+                "keeping the existing entry."
+            )
         return legacy
 
     def close(self) -> None:

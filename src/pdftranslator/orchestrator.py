@@ -132,7 +132,7 @@ class Orchestrator:
         logger.info("Processing %d page(s)", len(indices))
 
         prev_tail: str | None = None
-        recurring = self._recurring_lines(doc, indices)
+        recurring = self._survey(doc, indices)
         canonical: dict[str, str] = {}
 
         for idx in tqdm(indices, desc="Pages"):
@@ -170,12 +170,25 @@ class Orchestrator:
         self._log_stats()
         return True
 
-    def _recurring_lines(self, doc: pymupdf.Document, indices: list[int]) -> set[str]:
-        """Source lines that appear on RECURRING_PAGE_THRESHOLD or more pages."""
+    def _survey(self, doc: pymupdf.Document, indices: list[int]) -> set[str]:
+        """One pass over the pages: report cache coverage, find running lines.
+
+        Coverage goes through the translator's own lookup so it cannot drift
+        from what the run will actually find.
+        """
         counts: Counter[str] = Counter()
+        already = 0
         for index in indices:
             content = self._scanner.extract(doc[index], index)
             counts.update({line.text for line in content.lines})
+            if content.lines and self._translator.has_cached(
+                [line.text for line in content.lines]
+            ):
+                already += 1
+        logger.info(
+            "Cache: %d of %d page(s) already translated; %d to translate",
+            already, len(indices), len(indices) - already,
+        )
         recurring = {
             text for text, seen in counts.items()
             if seen >= RECURRING_PAGE_THRESHOLD
@@ -231,7 +244,8 @@ class Orchestrator:
         s = self._translator.stats
         logger.info(
             "Translation stats: pages=%d api_calls=%d cache_hits=%d "
-            "fallbacks=%d api_errors=%d",
+            "fallbacks=%d api_errors=%d cache_migrated=%d cache_pruned=%d",
             s["pages"], s["api_calls"], s["cache_hits"], s["fallbacks"],
-            s.get("api_errors", 0),
+            s.get("api_errors", 0), s.get("cache_migrated", 0),
+            s.get("cache_pruned", 0),
         )
