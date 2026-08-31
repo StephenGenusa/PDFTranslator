@@ -142,21 +142,27 @@ class Translator:
         return result
 
     def _repair_cached(self, lines: list[str], cached: list[str]) -> list[str]:
-        """Strip protocol debris from an entry written before the guards existed.
+        """Repair an entry written before the batch-value guards existed.
 
-        Falling back to the source line keeps the page readable at no cost; the
-        warning tells the user how to get a real translation for it.
+        Two defects are found in older entries: protocol debris (the end-of-batch
+        sentinel), and an empty translation for a line that has source text --
+        which renders as nothing at all, leaving the original showing through.
+        Falling back to the source line keeps the page consistent at no cost; the
+        warning says how to get a real translation for it.
         """
-        poisoned = [i for i, v in enumerate(cached) if _SENTINEL in v]
-        if not poisoned:
+        broken = [
+            i for i, value in enumerate(cached)
+            if _SENTINEL in value or (lines[i].strip() and not value.strip())
+        ]
+        if not broken:
             return cached
         logger.warning(
-            "Cached translation for %d line(s) contains internal batch markers; "
-            "using the source text instead. Re-run with --ignore-cache to "
-            "translate them properly.",
-            len(poisoned),
+            "Cached translation for %d line(s) is unusable (empty, or carrying "
+            "internal batch markers); using the source text instead. Re-run "
+            "those pages with --ignore-cache to translate them properly.",
+            len(broken),
         )
-        for i in poisoned:
+        for i in broken:
             cached[i] = lines[i]
         return cached
 
@@ -434,14 +440,19 @@ def _extract_json_array(raw: str) -> list | None:
 def _batch_value(value: object) -> str | None:
     """Accept one keyed batch value, or None if it is unusable.
 
-    The model occasionally shifts keys and answers a real line with the
-    end-of-batch sentinel; treating that as a translation stamps the raw token
-    onto the page. Rejecting it sends the line down the per-line path instead.
+    Two ways a value is unusable. The model occasionally shifts keys and answers
+    a real line with the end-of-batch sentinel, which would stamp the raw token
+    onto the page. And it sometimes returns an empty string, which is worse than
+    it looks: the renderer draws nothing at all for an empty line -- no mask --
+    so the untranslated original shows through from the base layer with no
+    warning. Rejecting both sends the line down the per-line path instead.
     """
     if not isinstance(value, (str, int, float)):
         return None
     text = str(value)
-    return None if _SENTINEL in text else text
+    if _SENTINEL in text or not text.strip():
+        return None
+    return text
 
 
 def _clean_single(raw: str) -> str:

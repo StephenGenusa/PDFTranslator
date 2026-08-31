@@ -109,3 +109,45 @@ def test_clean_cached_entry_is_returned_untouched(scripted):
     t._cache.set(t._page_key(lines), ["First line", "Second line"])
     assert t.translate_page(lines) == ["First line", "Second line"]
     assert t.stats["cache_hits"] == 1
+
+
+# ------------------------------------------------------- empty translations
+def test_an_empty_batch_value_is_treated_as_missing(scripted):
+    """The model sometimes returns "" for a line. Accepting it as a translation
+    means the renderer draws nothing -- no mask, no text -- so the untranslated
+    original shows through from the base layer, silently.
+
+    Breaks if empty values are accepted as translations again.
+    """
+    t = scripted(['{"0": "First line", "1": "   ", "2": "sentinel"}', "Second line"],
+                 max_attempts=1)
+    out = t.translate_page(["Pirma eilute", "Antra eilute"])
+    assert out[1] == "Second line", out
+
+
+def test_a_page_whose_empty_line_cannot_be_recovered_is_not_cached(scripted):
+    t = scripted(['{"0": "First line", "1": "", "2": "s"}', "", "", ""],
+                 max_attempts=1)
+    out = t.translate_page(["Pirma eilute", "Antra eilute"])
+    assert out[1] == "Antra eilute", "source text kept"
+    assert t._cache.get(t._page_key(["Pirma eilute", "Antra eilute"])) is None
+
+
+def test_a_cached_empty_translation_is_repaired_on_read(scripted):
+    """Caches written before the guard hold empty strings; returning them keeps
+    leaving the source showing through on every re-render."""
+    lines = ["Pirma eilute", "Antra eilute"]
+    t = scripted([])
+    t._cache.set(t._page_key(lines), ["First line", ""])
+    out = t.translate_page(lines)
+    assert out[0] == "First line"
+    assert out[1] == "Antra eilute", "empty entry should fall back to the source"
+    assert t.stats["api_calls"] == 0
+
+
+def test_a_blank_source_line_may_stay_blank(scripted):
+    """Only a non-empty source with an empty translation is a defect."""
+    lines = ["Pirma eilute", "   "]
+    t = scripted([])
+    t._cache.set(t._page_key(lines), ["First line", ""])
+    assert t.translate_page(lines) == ["First line", ""]
