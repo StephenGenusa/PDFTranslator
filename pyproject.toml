@@ -4,8 +4,17 @@ version = "0.1.0"
 description = "Layout-preserving PDF translator (side-by-side or full substitution) using LLM translation."
 requires-python = ">=3.11"
 dependencies = [
-    # PDF parsing + rendering
-    "pymupdf>=1.27",
+    # PDF parsing + rendering.
+    # Pinned to the 1.27 series deliberately. Rasterisation and font metrics are
+    # identical in 1.28, but it splits text into ~2.2x more blocks, and
+    # render._block_scales derives one font scale per block. More blocks means
+    # more independent scale factors per page, which distorts the size
+    # relationships between headings and body text: measured over the sample
+    # book, hierarchy inversions rise from 28.0% to 31.3% and size jumps between
+    # adjacent like lines from 49.1% to 54.7%. An open floor also made output
+    # depend on when a user happened to install.
+    # Re-evaluate with tests/typography_metrics.py before widening this.
+    "pymupdf~=1.27.2",
     # LLM translation (OpenRouter via the OpenAI-compatible interface, called through litellm)
     "litellm>=1.89",
     # CLI framework
