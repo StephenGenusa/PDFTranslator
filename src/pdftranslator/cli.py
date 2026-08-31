@@ -10,7 +10,12 @@ from typing import Optional
 
 import typer
 
-from .orchestrator import Orchestrator, PageRangeError, parse_page_spec
+from .orchestrator import (
+    EncryptedPdfError,
+    Orchestrator,
+    PageRangeError,
+    parse_page_spec,
+)
 from .render import DEFAULT_SIZE_FIDELITY
 from .translate import Translator
 
@@ -70,6 +75,12 @@ def main(
             "no further effect. Raise it for target languages that run longer "
             "than the source."
         ),
+    ),
+    password: Optional[str] = typer.Option(
+        None, "--password",
+        help="Password for an encrypted source PDF. Only needed when the file "
+             "requires one to be opened at all; owner-password (permissions) "
+             "PDFs read normally without it.",
     ),
     concurrency: int = typer.Option(
         4, "--concurrency", "-j",
@@ -152,8 +163,8 @@ def main(
         concurrency=concurrency,
     )
     try:
-        orchestrator.run(input_file, output_file, pages)
-    except PageRangeError as exc:
+        orchestrator.run(input_file, output_file, pages, password=password)
+    except (PageRangeError, EncryptedPdfError) as exc:
         typer.secho(str(exc), fg="red")
         raise typer.Exit(1)
     finally:

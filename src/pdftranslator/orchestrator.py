@@ -34,6 +34,10 @@ class PageRangeError(ValueError):
     """A --pages value that cannot be interpreted."""
 
 
+class EncryptedPdfError(RuntimeError):
+    """The source PDF needs a password before its text can be read."""
+
+
 def parse_page_spec(spec: str) -> list[tuple[int, int]] | None:
     """Parse a page spec into 1-based inclusive (start, end) pairs.
 
@@ -119,9 +123,37 @@ class Orchestrator:
         # One owner for how many requests may be in flight.
         translator.set_max_concurrency(self._concurrency)
 
-    def run(self, input_path: Path, output_path: Path, page_range: str = "all") -> bool:
+    def run(
+        self,
+        input_path: Path,
+        output_path: Path,
+        page_range: str = "all",
+        password: str | None = None,
+    ) -> bool:
         with pymupdf.open(input_path) as doc, pymupdf.open() as writer:
+            self._unlock(doc, input_path, password)
             return self._run(doc, writer, input_path, output_path, page_range)
+
+    @staticmethod
+    def _unlock(doc: pymupdf.Document, input_path: Path, password: str | None) -> None:
+        """Refuse a locked document rather than translating nothing.
+
+        An encrypted PDF opens without complaint and reports its page count, but
+        yields no text -- so the run used to produce a full-length copy of the
+        original with nothing translated and nothing said about why. Note that a
+        PDF carrying only an owner password reads normally (needs_pass is false)
+        and must not be rejected: those are common.
+        """
+        if not doc.needs_pass:
+            return
+        if password and doc.authenticate(password):
+            logger.info("Unlocked %s with the supplied password", input_path.name)
+            return
+        raise EncryptedPdfError(
+            f"{input_path.name} is password protected"
+            + (" and the supplied password was not accepted."
+               if password else "; pass --password to open it.")
+        )
 
     def _run(
         self,
