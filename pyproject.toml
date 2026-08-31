@@ -14,7 +14,8 @@ dependencies = [
     # adjacent like lines from 49.1% to 54.7%. An open floor also made output
     # depend on when a user happened to install.
     # Re-evaluate with tests/typography_metrics.py before widening this.
-    "pymupdf~=1.27.2",
+    # Exact pin: 1.27.2.3 is the final release of the 1.27 series.
+    "pymupdf==1.27.2.3",
     # LLM translation (OpenRouter via the OpenAI-compatible interface, called through litellm)
     "litellm>=1.89",
     # CLI framework

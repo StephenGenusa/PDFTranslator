@@ -1026,7 +1026,7 @@ dev = [
 requires-dist = [
     { name = "diskcache", specifier = ">=5.6" },
     { name = "litellm", specifier = ">=1.89" },
-    { name = "pymupdf", specifier = "~=1.27.2" },
+    { name = "pymupdf", specifier = "==1.27.2.3" },
     { name = "tqdm", specifier = ">=4.68" },
     { name = "typer", specifier = ">=0.26" },
 ]
