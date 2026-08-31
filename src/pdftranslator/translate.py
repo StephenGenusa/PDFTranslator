@@ -64,6 +64,7 @@ class Translator:
         max_tokens: int = 8192,
         max_attempts: int = 3,
         request_pause: float = 0.0,
+        ignore_cache: bool = False,
     ) -> None:
         self.litellm_model = model  # full litellm model string, e.g. "openrouter/google/gemini-2.5-flash-lite"
         self.target_lang = target_lang
@@ -72,6 +73,9 @@ class Translator:
         self.max_tokens = max_tokens
         self.max_attempts = max_attempts
         self.request_pause = request_pause
+        # Skip *reading* the cache; results are still written, so only the pages
+        # actually processed are refreshed and the rest of the book is untouched.
+        self.ignore_cache = ignore_cache
         self._cache = Cache(cache_dir)
         self.stats = {
             "pages": 0,
@@ -90,7 +94,7 @@ class Translator:
             return []
 
         cache_key = self._page_key(lines)
-        cached = self._lookup(lines, cache_key)
+        cached = None if self.ignore_cache else self._lookup(lines, cache_key)
         if isinstance(cached, list) and len(cached) == len(lines):
             self.stats["cache_hits"] += 1
             return self._repair_cached(lines, [str(v) for v in cached])
@@ -348,10 +352,6 @@ class Translator:
         if legacy is not None:
             self._cache.set(cache_key, legacy)  # pay the legacy lookup once
         return legacy
-
-    def clear_cache(self) -> None:
-        self._cache.clear()
-        logger.info("Translation cache cleared")
 
     def close(self) -> None:
         self._cache.close()

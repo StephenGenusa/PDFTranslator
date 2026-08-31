@@ -75,8 +75,8 @@ pdf-translate -i "book.pdf" -o "book-en.pdf" -t English --mode substitute
 # Specific page ranges (comma-separated)
 pdf-translate -i "book.pdf" -o "book-en.pdf" -t Spanish -p 5-8,12,20-25
 
-# Force fresh translations (ignore cache)
-pdf-translate -i "book.pdf" -o "book-en.pdf" -t German --ignore-cache
+# Re-translate specific pages, discarding only their cache entries
+pdf-translate -i "book.pdf" -o "book-en.pdf" -t German -p 10,13,17 --ignore-cache
 ```
 
 ---
@@ -189,7 +189,8 @@ Options:
       --api-key    TEXT    API key override (usually not needed — set the provider env var instead)
       --api-base   TEXT    Provider base URL override (for local providers, e.g. http://localhost:1234/v1)
       --cache-dir  PATH    Translation cache directory  [default: .translation_cache]
-      --ignore-cache       Discard cached translations before running
+      --ignore-cache       Re-translate the pages in --pages, overwriting their
+                           cache entries (other pages are left untouched)
       --request-pause FLOAT  Seconds to wait before each API call  [default: 0]
       --max-tokens INT     Max tokens per model response  [default: 8192]
       --max-attempts INT   Attempts per API call before giving up  [default: 3]

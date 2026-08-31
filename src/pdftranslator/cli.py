@@ -54,7 +54,10 @@ def main(
         Path(".translation_cache"), "--cache-dir", help="Translation cache directory."
     ),
     ignore_cache: bool = typer.Option(
-        False, "--ignore-cache", help="Clear the translation cache before running."
+        False, "--ignore-cache",
+        help="Re-translate the pages in --pages even if they are cached, and "
+             "overwrite their entries. Other pages' entries are left alone; "
+             "delete the cache directory for a full reset.",
     ),
     request_pause: float = typer.Option(
         0.0, "--request-pause",
@@ -109,13 +112,11 @@ def main(
         api_key=api_key,
         api_base=api_base,
         cache_dir=str(cache_dir),
+        ignore_cache=ignore_cache,
         request_pause=request_pause,
         max_tokens=max_tokens,
         max_attempts=max_attempts,
     )
-    if ignore_cache:
-        translator.clear_cache()
-
     orchestrator = Orchestrator(translator, mirror=(mode == "side-by-side"))
     try:
         orchestrator.run(input_file, output_file, pages)
