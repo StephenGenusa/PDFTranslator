@@ -178,6 +178,7 @@ class Orchestrator:
         """
         counts: Counter[str] = Counter()
         already = 0
+        pending_tokens = 0
         suspect: list[int] = []
         for index in indices:
             content = self._scanner.extract(doc[index], index)
@@ -189,9 +190,16 @@ class Orchestrator:
                 already += 1
                 if self._translator.cached_looks_misaligned(texts):
                     suspect.append(index + 1)
+            else:
+                pending_tokens += self._translator.estimate_page_tokens(texts)
+        pending = len(indices) - already
+        estimate = self._translator.estimate_cost(pending_tokens) if pending else None
         logger.info(
-            "Cache: %d of %d page(s) already translated; %d to translate",
-            already, len(indices), len(indices) - already,
+            "Cache: %d of %d page(s) already translated; %d to translate"
+            "%s%s",
+            already, len(indices), pending,
+            f" (~{pending_tokens:,} tokens" if pending else "",
+            (f", ~${estimate:.2f})" if estimate else ")") if pending else "",
         )
         if suspect:
             logger.warning(

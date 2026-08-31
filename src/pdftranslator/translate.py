@@ -389,6 +389,41 @@ class Translator:
             f"v{_CACHE_VERSION}|{self.litellm_model}|{self.target_lang}|{raw}".encode("utf-8")
         ).hexdigest()
 
+    def estimate_page_tokens(self, lines: list[str], include_output: bool = True) -> int:
+        """Tokens one page is expected to consume, both directions.
+
+        A translation is produced as well as consumed, and comes back at
+        roughly the length of the source, so the output is counted too.
+        """
+        if not lines:
+            return 0
+        text = _SYSTEM_BATCH + "\n" + json.dumps(
+            {str(i): line for i, line in enumerate(lines)}, ensure_ascii=False
+        )
+        try:
+            prompt = int(litellm.token_counter(model=self.litellm_model, text=text))
+        except Exception:  # noqa: BLE001 - unknown tokeniser, fall back to chars
+            prompt = max(1, len(text) // 4)
+        return prompt * 2 if include_output else prompt
+
+    def estimate_cost(self, tokens: int) -> float | None:
+        """Dollar cost for a token count, or None when the model has no price.
+
+        Many models routed through OpenRouter are not in litellm's price table.
+        Returning None says so plainly rather than inventing a figure; the run
+        still reports what the provider actually charged.
+        """
+        try:
+            prompt_cost, completion_cost = litellm.cost_per_token(
+                model=self.litellm_model,
+                prompt_tokens=tokens // 2,
+                completion_tokens=tokens // 2,
+            )
+        except Exception:  # noqa: BLE001 - unmapped model
+            return None
+        total = (prompt_cost or 0.0) + (completion_cost or 0.0)
+        return total or None
+
     def has_cached(self, lines: list[str]) -> bool:
         """Is a usable translation already stored for this page?
 
