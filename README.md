@@ -2,7 +2,7 @@
 
 > Layout-preserving PDF translation via LLM — side-by-side bilingual or full substitution, any language pair.
 
-[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue)](https://python.org)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://python.org)
 [![LiteLLM](https://img.shields.io/badge/LLM-LiteLLM-orange)](https://docs.litellm.ai)
 [![PyMuPDF](https://img.shields.io/badge/PDF-PyMuPDF-green)](https://pymupdf.readthedocs.io)
 
@@ -52,7 +52,7 @@ This means **everything not explicitly translated is preserved for free** — no
 
 ## Install
 
-Requires Python 3.14+. A `uv`-managed `.venv` is already present in the repo.
+Requires Python 3.11+ (the floor is set by litellm, which needs `typing.NotRequired`).
 
 ```bash
 uv pip install -e .
