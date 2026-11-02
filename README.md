@@ -6,6 +6,26 @@
 [![LiteLLM](https://img.shields.io/badge/LLM-LiteLLM-orange)](https://docs.litellm.ai)
 [![PyMuPDF](https://img.shields.io/badge/PDF-PyMuPDF-green)](https://pymupdf.readthedocs.io)
 
+<p align="center">
+  <img src="docs/images/demo-side-by-side.gif" width="66%" alt="Side-by-side output: original page on the left, English translation on the right">
+  <img src="docs/images/demo-translated.gif" width="32%" alt="Substitute output: the same page translated into English">
+</p>
+
+<p align="center"><sub>
+Real output, one page per document, translated to English with the default model:
+<code>--mode side-by-side</code> (left) and <code>--mode substitute</code> (right).
+Sources: <a href="https://archive.org/details/pushkin-evgeny-onegin-.-1874-bmk-brz">Pushkin</a> ·
+<a href="https://messervices.cyber.gouv.fr/guides/recommandations-de-securite-pour-un-systeme-dia-generative">ANSSI</a> ·
+<a href="https://archive.org/details/nicolaicopernici00cope_1">Copernicus</a> ·
+<a href="https://www.soumu.go.jp/main_content/001064299.pdf">MIC/METI</a> ·
+<a href="https://archive.org/details/fausteinetragd00goetuoft">Goethe</a> ·
+<a href="http://www.caict.ac.cn/kxyj/qwfb/bps/201812/P020181227308307634492.pdf">CAICT</a> ·
+<a href="https://archive.org/details/sidereusnunciusm00gali_0">Galileo</a> ·
+<a href="https://www.bundesarchiv.de/im-archiv-recherchieren/stasi-unterlagen-einsehen/hinweise-zum-mfs/die-grundsatzdokumente-des-ministeriums-fuer-staatssicherheit/">Bundesarchiv (Stasi)</a> ·
+<a href="https://archive.org/details/ilprincipemach00machuoft">Machiavelli</a>.
+Rebuild with <code>uv run --with pillow python utilities/make_readme_gifs.py</code>.
+</sub></p>
+
 ---
 
 ## Table of Contents
@@ -321,6 +341,10 @@ PDFTranslator/
 │       ├── NotoSans-Regular.ttf   Latin/Cyrillic/Greek sans-serif
 │       └── NotoSerif-Regular.ttf  Latin/Cyrillic/Greek serif
 ├── tests/
+├── utilities/            Demo tooling: fetch source PDFs (ia_get.py), find pages,
+│                         build the README GIFs (make_readme_gifs.py)
+├── corpus/               Downloaded source PDFs (gitignored)
+├── docs/images/          README demo GIFs
 ├── pyproject.toml
 └── README.md
 ```
