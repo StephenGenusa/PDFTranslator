@@ -103,10 +103,20 @@ class DocumentScanner:
         is_horizontal = 0.9 <= dir_vec[0] <= 1.1 and -0.1 <= dir_vec[1] <= 0.1
 
         spans: list[Span] = []
+        # Some OCR layers store each inter-word space as its own span. Those
+        # spans are dropped, but the word break they mark must survive in the
+        # line text, or the model receives "WordsRunTogether".
+        pieces: list[str] = []
+        pending_space = False
         for raw_span in raw_line.get("spans", []):
             text = raw_span["text"]
             if not text.strip():
+                pending_space = bool(spans)
                 continue
+            if pending_space and not pieces[-1][-1:].isspace() and not text[:1].isspace():
+                pieces.append(" ")
+            pending_space = False
+            pieces.append(text)
             span = Span(
                 text=text,
                 bbox=tuple(raw_span["bbox"]),
@@ -121,7 +131,7 @@ class DocumentScanner:
         if not spans:
             return None
 
-        full_text = "".join(s.text for s in spans).strip()
+        full_text = "".join(pieces).strip()
         if not full_text:
             return None
 
