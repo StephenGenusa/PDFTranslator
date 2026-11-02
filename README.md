@@ -7,13 +7,17 @@
 [![PyMuPDF](https://img.shields.io/badge/PDF-PyMuPDF-green)](https://pymupdf.readthedocs.io)
 
 <p align="center">
-  <img src="docs/images/demo-side-by-side.gif" width="66%" alt="Side-by-side output: original page on the left, English translation on the right">
-  <img src="docs/images/demo-translated.gif" width="32%" alt="Substitute output: the same page translated into English">
+  <b><code>--mode side-by-side</code></b><br>
+  <img src="docs/images/demo-side-by-side.gif" width="100%" alt="Side-by-side output: original page on the left, English translation on the right">
+</p>
+
+<p align="center">
+  <b><code>--mode substitute</code></b><br>
+  <img src="docs/images/demo-translated.gif" width="700" alt="Substitute output: the same page translated into English">
 </p>
 
 <p align="center"><sub>
-Real output, one page per document, translated to English with the default model:
-<code>--mode side-by-side</code> (left) and <code>--mode substitute</code> (right).
+Real output, one page per document, translated to English with the default model.
 Sources: <a href="https://archive.org/details/pushkin-evgeny-onegin-.-1874-bmk-brz">Pushkin</a> ·
 <a href="https://messervices.cyber.gouv.fr/guides/recommandations-de-securite-pour-un-systeme-dia-generative">ANSSI</a> ·
 <a href="https://archive.org/details/nicolaicopernici00cope_1">Copernicus</a> ·
