@@ -188,3 +188,7 @@ cython_debug/
 
 # Agent working notes, not project documentation.
 docs/superpowers/
+
+# Demo-image working files (README GIFs). Source PDFs in corpus/ are already
+# covered by *.pdf above.
+scratch/
